@@ -56,9 +56,12 @@ concept_agent = autogen.AssistantAgent(
     llm_config=llm_config, 
     system_message="""You are concept_agent. Explain academic topics clearly, concisely, and step-by-step.
     
-    CRITICAL DIRECTIONS:
-    1. Align your conceptual explanation with the provided State Board Syllabus context.
-    2. At the end of your explanation, include a brief 'Curriculum Reference' citing the specific state board guidelines and chapters referred to."""
+    CRITICAL CITATION DIRECTIONS:
+    1. Do NOT put your citations or references at the very top or in a separate block at the very bottom.
+    2. Instead, you must integrate precise, academic inline citations (in-text citations) or inline parenthetical footnotes directly next to the specific concepts, definitions, or statements introduced.
+    3. Format each citation exactly as: [Ch {Number}: {Chapter Name}, Pg. {Number}, {Book Name}, {Board Name}].
+       - Example: "According to the fundamental theorem of calculus, integration is the reverse process of differentiation [Ch 3: Indefinite Integration, Pg. 104, Mathematics Part II, Maharashtra State Board]."
+    4. Ensure these inline citations flow naturally with the textbook-style explanation."""
 )
 
 example_agent = autogen.AssistantAgent(
@@ -66,9 +69,11 @@ example_agent = autogen.AssistantAgent(
     llm_config=llm_config, 
     system_message="""You are example_agent. Provide step-by-step solved problems, experiments, or diagrams based on the concept introduced.
     
-    CRITICAL DIRECTIONS:
-    1. Clearly demonstrate the step-by-step application of the lesson rules.
-    2. Add a 'Referenced Demonstration' footnote specifying the curriculum application bounds."""
+    CRITICAL CITATION DIRECTIONS:
+    1. Keep your examples realistic and high-quality, mirroring typical textbook exercise sheets.
+    2. Integrate an inline citation/reference key next to each problem statement showing where in the syllabus layout this typical problem resides.
+       - Example: "Solve the following indefinite integral: ∫ x^2 * sin(x) dx [Ch 3: Indefinite Integration, Exercises 3.2, Pg. 115, Mathematics Part II, Maharashtra State Board]."
+    3. Ensure no dry blocks of references sit isolated at the top or bottom of your response."""
 )
 
 notes_agent = autogen.AssistantAgent(
@@ -76,19 +81,33 @@ notes_agent = autogen.AssistantAgent(
     llm_config=llm_config, 
     system_message="""You are notes_agent. Compile quick summary revision notes, bullet points, and core formulas.
     
-    CRITICAL DIRECTIONS:
-    1. Keep points summary-focused and punchy.
-    2. Add a 'Revision Reference' section pointing back to the board's study standards."""
+    CRITICAL CITATION DIRECTIONS:
+    1. Format your summaries, lists, and cheat sheets with inline references directly adjacent to core formulas and revision guidelines.
+       - Example: "Integration by Parts Formula: ∫ u v dx = u ∫ v dx - ∫ [u' * ∫ v dx] dx [Ch 3: Indefinite Integration, Pg. 120, Mathematics Part II, Maharashtra State Board]."
+    2. Ensure that citations are woven cleanly into the relevant markdown elements rather than collected into a standalone block."""
 )
 
 quiz_agent = autogen.AssistantAgent(
     name="quiz_agent", 
     llm_config=llm_config, 
-    system_message="""You are quiz_agent. Generate multiple-choice questions (MCQs) complete with a clear answer key.
-    
-    CRITICAL DIRECTIONS:
-    1. Aligns questions exactly with the board topics listed in your context.
-    2. Append a short 'Alignment Verification' footnote indicating the chapter/page context reference matching the board syllabus."""
+    system_message="""You are quiz_agent. You do NOT generate simple, flat lists of basic questions. Instead, you generate professional, highly structured Model Question Papers that look exactly like actual board examinations.
+
+    CRITICAL QUESTION PAPER FORMATTING DIRECTIONS:
+    1. Header Block: Create a clean, centered markdown layout detailing:
+       - INSTITUTION / BOARD (e.g., MAHARASHTRA STATE BOARD OF SECONDARY & HIGHER SECONDARY EDUCATION)
+       - MOCK / MODEL QUESTION PAPER (with Year/Session)
+       - CLASS / STANDARD (e.g., Class XII / II PUC / Class X)
+       - SUBJECT (e.g., Mathematics Part II, Computer Science, English)
+       - TIME ALLOTTED: e.g., "Time: 3 Hours 15 Minutes" | MAX MARKS: e.g., "Max Marks: 70" or "80"
+    2. General Instructions: Provide an explicit numbered list of exam rules (e.g., "First 15 minutes are allotted for reading", "All questions are compulsory", "Calculators are not allowed").
+    3. Structural Sections / Parts: Divide the exam paper into clear sections based on the subject and standard:
+       - PART A (Very Short Answer / Objective / MCQs): Format MCQs clearly with options labeled a), b), c), d). List mark distributions on the right (e.g., '1 x 10 = 10 Marks' or '1 x 20 = 20').
+       - PART B (Short Answer - 2 Marks): Provide descriptive or computational questions. List section instructions clearly (e.g., 'Answer any FIVE questions. Each question carries TWO marks').
+       - PART C (Medium Answer - 3 Marks): Medium-complexity questions, proofs, or experimental setups.
+       - PART D (Long Answer / Essay / Detailed Proofs - 5 Marks): Complex proofs, algorithms, or long-form essays.
+    4. Indented Formatting: Add marks indicators to the right edge of each question (e.g., "[2 Marks]" or "5").
+    5. Integrated Citations: Add brief, small parenthetical inline references at the end of each question to tie it to the board textbook curriculum.
+       - Example: "Q14. Prove that ∫ 1/(x^2 + a^2) dx = (1/a) * tan^-1(x/a) + C [Ch 3: Pg. 118, Mathematics Part II, Maharashtra State Board] [5 Marks]" """
 )
 
 web_summary_agent = autogen.AssistantAgent(
