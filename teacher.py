@@ -2,32 +2,33 @@ import os
 import re
 import json
 import certifi
-import urllib.request
-import urllib.parse
+import warnings
 import autogen
+from dotenv import load_dotenv
 from datetime import datetime
 
 from pdf_compiler import compile_chat_history_to_pdf
-from tools import search_syllabus_tool
+from tools import search_syllabus_tool, google_search_tool
 
-# Ensure secure SSL certificate handling across all network fetch scopes
+warnings.filterwarnings("ignore", category=UserWarning, module="flaml")
+
 os.environ["SSL_CERT_FILE"] = certifi.where()
-load_dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
-if os.path.exists(load_dotenv_path):
-    from dotenv import load_dotenv
-    load_dotenv()
+os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+
+load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY is missing in .env file")
+    raise EnvironmentError("GROQ_API_KEY not found. Please check your .env file.")
 
 config_list = [
     {
         "model": "llama-3.3-70b-versatile",
         "api_key": GROQ_API_KEY,
         "base_url": "https://api.groq.com/openai/v1",
-        "api_type": "groq",
+        "api_type": "openai",
+        "price": [0.0, 0.0],
     }
 ]
 
@@ -36,529 +37,475 @@ llm_config = {
     "config_list": config_list,
     "timeout": 120,
     "cache_seed": None,
+    "extra_body": {},
 }
 
 OUTPUT_DIR = "outputs"
+MEMORY_FILE = "student_memory.json"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# =====================================================================
-# STEP 1: DEFINE AGENTS & USER PROXY FIRST TO PREVENT SCOPING NameErrors
-# =====================================================================
-user_proxy = autogen.UserProxyAgent(
-    name="Admin", 
-    human_input_mode="NEVER", 
-    max_consecutive_auto_reply=1, 
-    code_execution_config={"use_docker": False}
+
+def load_student_memory():
+    if os.path.exists(MEMORY_FILE):
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"topics_learned": []}
+
+
+student_memory = load_student_memory()
+
+
+def save_memory():
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(student_memory, f, indent=4)
+
+
+def update_student_memory(query):
+    if query not in student_memory["topics_learned"]:
+        student_memory["topics_learned"].append(query)
+        save_memory()
+
+
+QUERY_RULES = {
+    "blocked": [
+        "movie", "song", "weather", "recipe", "stock", "share market",
+        "celebrity", "shopping", "restaurant", "joke", "cricket score",
+        "sports score", "politics", "travel"
+    ],
+    "exam_info": [
+        "neet", "jee", "cet", "gate", "upsc", "mpsc", "exam date",
+        "when will", "timetable", "schedule", "admit card", "hall ticket",
+        "result", "registration", "application form", "notification",
+        "counselling", "counseling", "board exam"
+    ],
+    "quiz": [
+        "quiz", "mcq", "mock test", "test paper", "question paper",
+        "practice paper", "paper set", "paperset", "sample paper",
+        "worksheet", "generate questions", "create questions", "model paper"
+    ],
+    "study": [
+        "teach", "explain", "learn", "understand", "concept", "chapter",
+        "topic", "formula", "solve", "notes", "summary", "revision",
+        "syllabus", "curriculum", "roadmap", "class", "standard",
+        "ssc", "hsc", "math", "maths", "science", "physics", "chemistry",
+        "biology", "history", "geography", "english", "python", "coding",
+        "probability", "algebra", "geometry", "grammar"
+    ],
+}
+
+
+def classify_query(question: str) -> str:
+    q = question.lower().strip()
+
+    for category, keywords in QUERY_RULES.items():
+        if any(keyword in q for keyword in keywords):
+            return category
+
+    return "unknown"
+
+
+def answer_exam_info_question(question: str) -> str:
+    search_query = f"{question} official latest notification exam date schedule"
+    search_results = google_search_tool(search_query, num_results=5)
+
+    exam_info_agent = autogen.AssistantAgent(
+        name="exam_info_agent",
+        llm_config=llm_config,
+        system_message="""
+You are an education exam information assistant.
+
+Rules:
+- Answer only using the provided Google search results.
+- Prefer official sources like NTA, CBSE, Maharashtra Board, State CET Cell, official exam portals.
+- If exact date is not officially confirmed in search results, clearly say it is not officially confirmed.
+- Never guess exam dates.
+- Never create quiz, notes, or study plan for exam date/schedule questions.
+- Include source links from search results.
+- Keep the response concise.
+"""
+    )
+
+    temp_user = autogen.UserProxyAgent(
+        name="Admin",
+        human_input_mode="NEVER",
+        code_execution_config={"use_docker": False},
+    )
+
+    prompt = f"""
+User Question:
+{question}
+
+Google Search Results:
+{search_results}
+
+Prepare final answer using only the search results above.
+"""
+
+    temp_user.initiate_chat(exam_info_agent, message=prompt, max_turns=1)
+    messages = temp_user.chat_messages[exam_info_agent]
+    return messages[-1]["content"]
+
+
+orchestrator_agent = autogen.AssistantAgent(
+    name="orchestrator_agent",
+    llm_config=llm_config,
+    system_message="""
+You are the Orchestrator for an education-only AI teacher system.
+
+Select only ONE next agent.
+
+Routing:
+- teaching/explanation/concept/understanding -> concept_agent
+- examples/solved problems/practical steps/coding examples -> example_agent
+- notes/revision/summary/formulas/key points -> notes_agent
+- syllabus/curriculum/roadmap/study plan -> planner_agent
+- quiz/MCQ/mock test/question paper/practice paper/sample paper/worksheet/paper set -> quiz_agent
+
+Important:
+- Output only the agent name.
+- Do not explain routing.
+- Do not select quiz_agent unless the user clearly asks for quiz/test/paper/questions.
+"""
+)
+
+planner_agent = autogen.AssistantAgent(
+    name="planner_agent",
+    llm_config=llm_config,
+    system_message="""
+You are planner_agent.
+
+Create syllabus-based learning plans, roadmaps, curriculum guidance, and study plans.
+
+Rules:
+- If class/standard/board is mentioned, use syllabus context where available.
+- Keep the plan suitable for the student's level.
+- Do not create quiz unless explicitly requested.
+- Add one minimal reference line only near the end, like: Ref: NCERT / State Board syllabus.
+- End with [PLAN_DONE].
+"""
 )
 
 concept_agent = autogen.AssistantAgent(
-    name="concept_agent", 
-    llm_config=llm_config, 
-    system_message="""You are concept_agent. Explain academic topics clearly, concisely, and step-by-step.
-    
-    CRITICAL RESEARCH-STYLE CITATION DIRECTIONS:
-    1. Do NOT put your citations or references at the very top or in a single isolated block at the very bottom of the entire document.
-    2. Instead, use a clean inline parenthetical style:
-       - Place precise, academic parenthetical citations directly inside the sentences/paragraphs right next to the specific concepts, definitions, or equations.
-       - Format: (Chapter {Number}: {Chapter Name}, Page {Number}, {Book Name}, {Board Name})
-       - Example: "According to the fundamental theorem of calculus, integration is the reverse process of differentiation (Chapter 3: Indefinite Integration, Page 104, Mathematics Part II, Maharashtra State Board)."
-    3. Strictly do NOT append any separate 'Section References' or trailing reference footnotes at the bottom of your output."""
+    name="concept_agent",
+    llm_config=llm_config,
+    system_message="""
+You are concept_agent.
+
+Teach educational concepts step by step.
+
+Rules:
+- Explain in simple language.
+- Match student's class/standard if provided.
+- Use examples only where useful.
+- Use LaTeX notation for math where needed.
+- Do not generate quiz unless explicitly requested.
+- Add minimal citation/reference only once, not after every paragraph.
+- Citation format must be short, like: Ref: NCERT / State Board textbook.
+- End with [CONCEPT_DONE].
+"""
 )
 
 example_agent = autogen.AssistantAgent(
-    name="example_agent", 
-    llm_config=llm_config, 
-    system_message="""You are example_agent. Provide step-by-step solved problems, experiments, or diagrams based on the concept introduced.
-    
-    CRITICAL RESEARCH-STYLE CITATION DIRECTIONS:
-    1. Integrate inline parenthetical reference markers directly inside the text adjacent to relevant problem steps.
-       - Format: (Chapter {Number}: {Chapter Name}, Exercise {Number}, Page {Number}, {Book Name}, {Board Name})
-    2. Strictly do NOT append any separate lists of references or section summary blocks at the bottom."""
+    name="example_agent",
+    llm_config=llm_config,
+    system_message="""
+You are example_agent.
+
+Give examples, solved problems, practical steps, coding examples, and real-world educational use cases.
+
+Rules:
+- Match difficulty to student's level.
+- Format as Problem, Step-by-Step Solution, Final Answer where useful.
+- Use LaTeX notation for math where needed.
+- Do not create full paper sets unless explicitly requested.
+- Add one minimal reference line only, like: Ref: NCERT / State Board textbook.
+- End with [EXAMPLE_DONE].
+"""
 )
 
 notes_agent = autogen.AssistantAgent(
-    name="notes_agent", 
-    llm_config=llm_config, 
-    system_message="""You are notes_agent. Compile quick summary revision notes, bullet points, and core formulas.
-    
-    CRITICAL RESEARCH-STYLE CITATION DIRECTIONS:
-    1. Place parenthetical references directly inline right next to core formulas or summary headers.
-       - Format: (Chapter {Number}: {Chapter Name}, Page {Number}, {Book Name}, {Board Name})
-       - Example: "Integration by Parts: ∫ u v dx = u ∫ v dx - ∫ [u' * ∫ v dx] dx (Chapter 3: Indefinite Integration, Page 120, Mathematics Part II, Maharashtra State Board)."
-    2. Keep citations integrated and localized. Do not create any trailing reference tables or lists at the bottom."""
+    name="notes_agent",
+    llm_config=llm_config,
+    system_message="""
+You are notes_agent.
+
+Create short notes, revision points, formulas, and summaries.
+
+Rules:
+- Keep notes exam-friendly and easy to revise.
+- Use LaTeX notation for formulas where needed.
+- Do not create quiz unless explicitly requested.
+- Add minimal citation/reference only once near the top or bottom.
+- Citation format must be short, like: Ref: NCERT / State Board textbook.
+- End with [NOTES_DONE].
+"""
 )
 
 quiz_agent = autogen.AssistantAgent(
-    name="quiz_agent", 
-    llm_config=llm_config, 
-    system_message="""You are quiz_agent. You are an expert examination board specialist. You do NOT generate simple, flat lists of basic questions. Instead, you design professional, highly structured, and authentic Model Question Papers modeled exactly after official board examination layouts.
+    name="quiz_agent",
+    llm_config=llm_config,
+    system_message="""
+You are quiz_agent.
 
-    CRITICAL BOARD QUESTION PAPER FORMATTING DIRECTIONS:
-    1. EXAMINATION HEADER (Must be centered beautifully using HTML tags):
-       - Do NOT include any large, raw State Board Names (e.g. "MAHARASHTRA STATE BOARD...") at the very top of the question paper.
-       - Directly start with the centered and bolded Exam Type and Session:
-         <center><b>MOCK / MODEL QUESTION PAPER (2025-2026 Session)</b></center>
-       - Follow immediately with the centered and bolded Grade Level & Subject:
-         <center><b>CLASS [STANDARD] - [SUBJECT]</b></center>
-    2. EXAM PARAMETERS ROW:
-       - Place the Time Allowed and Maximum Marks in a clean, space-separated single-line layout directly underneath the header block:
-         `Time Allowed: 2 Hours 30 Minutes`                                   `Maximum Marks: 60`
-       - Add a solid horizontal rule (---) immediately underneath this parameters row to divide it from the instructions.
-    3. GENERAL INSTRUCTIONS:
-       - Provide a clean, numbered list of standard exam instructions (e.g., "1. All questions are compulsory.", "2. Figures to the right indicate full marks.", "3. Candidates are allowed 15 minutes of reading time before starting.").
-    4. STRUCTURAL PARTS & SECTIONS:
-       - PART A (Objective Type MCQs): "I. Answer all the questions. Each question carries ONE mark. [1 x 10 = 10 Marks]"
-         - Group options cleanly on a single horizontal row or column:
-           a) [Option A]       b) [Option B]       c) [Option C]       d) [Option D]
-       - PART B (Short Answer Questions): "II. Answer any FIVE questions. Each question carries TWO marks. [2 x 5 = 10 Marks]"
-       - PART C (Medium Answer Questions): "III. Answer any FIVE questions. Each question carries THREE marks. [3 x 5 = 15 Marks]"
-       - PART D (Long Answer / Detailed Problems): "IV. Answer any SEVEN questions. Each question carries FIVE marks. [5 x 7 = 35 Marks]"
-    5. STRICT NO-CITATION RULE FOR PAPERS:
-       - Question papers must look authentic and realistic. Do NOT include any textbook page references or curriculum citations (neither parenthetical nor footnotes) inside the exam paper itself.
-       - Place the question marks right-aligned on the same line as the question (e.g., `[5 Marks]`).
-    6. BILINGUAL MULTI-MEDIUM RULE (For non-English language papers):
-       - If generating papers for Marathi, Hindi, or non-Latin scripts, you must provide clean parallel English translations or transliterated subtitles next to the native text so standard PDF engines can compile without displaying '????' blocks."""
+Create exactly ONE final question paper, quiz, worksheet, mock test, or practice paper.
+
+Strict Rules:
+- Do NOT repeat the paper.
+- Do NOT generate multiple versions.
+- Do NOT include your agent name.
+- Respond only when the user asks for quiz/test/question paper/practice questions.
+- Include a professional header.
+- Include class, subject, time, maximum marks, sections, questions, and answer key.
+- Match class, subject, topic, and difficulty if provided.
+- Do not put citation after every question.
+- Add only one minimal reference line near the top-right or near the title, like:
+  Ref: NCERT / State Board syllabus
+- Keep reference very short.
+- No long source list.
+- End with [QUIZ_DONE].
+"""
 )
 
-web_summary_agent = autogen.AssistantAgent(
-    name="web_summary_agent", 
-    llm_config=llm_config, 
-    system_message="""You are web_summary_agent, an expert researcher. Synthesize raw web search records into a highly accurate, direct, textbook response.
-    
-    CRITICAL DIRECTIONS:
-    1. Resolve exam and result scheduling queries by deeply analyzing titles, snippets, and deep content provided.
-    2. You MUST strictly list your sources. Always append a formal 'Verified Sources & Citations' section at the end of your response. Use markdown formats like:
-       - [Source Title](URL) - Key extracted details
-       - If no direct URL is present in the context, cite the Source Node metadata clearly.
-    3. Use your extensive, verified academic knowledge base to double-check and resolve specific state exam and competitive examination schedules (such as Maharashtra SSC/HSC exam dates, CBSE declarations, or NTA NEET announcements) when raw search data snippets are incomplete, always citing the official board or portal as the benchmark authority (e.g., 'mahresult.nic.in' or 'cbseresults.nic.in')."""
+user_proxy = autogen.UserProxyAgent(
+    name="Admin",
+    human_input_mode="NEVER",
+    code_execution_config={"use_docker": False},
 )
 
-# =====================================================================
-# STEP 2: DEEP-PAGE SCRAPER WITH STRUCTURAL LINK & SNIPPET CAPTURE (GENERIC)
-# =====================================================================
-def fetch_live_web_content(query: str) -> str:
-    """
-    Two-Stage Deep Scraper:
-    Stage 1: Searches the web index and extracts target links using highly resilient splitting.
-    Stage 2: Visits and scrapes the text content of the primary target site.
-    Fallback: Uses robust metadata collection and search result details.
-    """
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
-    }
+autogen.agentchat.register_function(
+    search_syllabus_tool,
+    caller=planner_agent,
+    executor=user_proxy,
+    name="search_syllabus_tool",
+    description="Searches official syllabus/curriculum context for class, board, and topic.",
+)
 
-    try:
-        print(f"\n[Stage 1] Querying search index for: '{query}'...")
-        encoded_query = urllib.parse.quote_plus(query)
-        search_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-        
-        req = urllib.request.Request(search_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=12) as response:
-            search_html = response.read().decode('utf-8', errors='ignore')
 
-        # Split search result page dynamically by result wrapper tags for absolute resilience
-        parts = search_html.split('<div class="result__body">')[1:]
-        
-        if not parts:
-            return "No text snippets found in search index cache."
+def safe_pdf_filename(question: str) -> str:
+    name = "_".join(question.split()[:5]).lower()
+    name = re.sub(r"[^a-zA-Z0-9_]", "", name)
 
-        target_url = None
-        snippets_context = []
-        metadata_pool = []
+    if not name:
+        name = "education_output"
 
-        for i, part in enumerate(parts[:8], 1):
-            # Extract target absolute URL by scanning all href parameters in the block
-            href_matches = re.findall(r'href=["\']([^"\']+)["\']', part)
-            current_url = None
-            
-            for href in href_matches:
-                # Bypass internal navigation and capture the target outbound redirect parameters
-                if "duckduckgo.com" in href and "uddg=" in href:
-                    parsed_href = urllib.parse.urlparse(href)
-                    query_params = urllib.parse.parse_qs(parsed_href.query)
-                    if "uddg" in query_params:
-                        current_url = query_params["uddg"][0]
-                        break
-                elif not href.startswith("/") and "duckduckgo.com" not in href:
-                    current_url = href
-                    break
-            
-            if current_url and not target_url:
-                # Prioritize educational resources or reputable news channels
-                if any(domain in current_url for domain in ["gov.in", "nic.in", "ndtv", "timesofindia", "jagranjosh", "indianexpress"]):
-                    target_url = current_url
-                elif i == 1:
-                    target_url = current_url
-
-            # Extract Headline Title
-            title_match = re.search(r'<a class="result__url"[^>]*>(.*?)</a>', part, re.DOTALL)
-            title = re.sub(r'<[^>]*>', '', title_match.group(1)).strip() if title_match else "Archive Reference"
-            
-            # Extract Text Snippet
-            snippet_match = re.search(r'<[^>]+class="[^"]*snippet[^"]*"[^>]*>(.*?)</[^>]+>', part, re.DOTALL)
-            if not snippet_match:
-                snippet_match = re.search(r'<a class="result__snippet"[^>]*>(.*?)</a>', part, re.DOTALL)
-            
-            snippet = re.sub(r'<[^>]*>', '', snippet_match.group(1)).strip() if snippet_match else ""
-            
-            # Sanitize typical encoding artifacts
-            title = title.replace('&amp;', '&').replace('&quot;', '"').replace('&#x27;', "'")
-            snippet = snippet.replace('&amp;', '&').replace('&quot;', '"').replace('&#x27;', "'")
-            
-            if snippet:
-                snippets_context.append(snippet)
-                metadata_pool.append(f"Result Node [{i}]: Title: {title} | Snippet: {snippet} | Link: {current_url or 'N/A'}")
-
-        deep_text_pool = []
-        # Stage 2: Click the primary target link and extract deep page content
-        if target_url:
-            print(f"[Stage 2] Deep-scraping target page text from: {target_url}...")
-            try:
-                page_req = urllib.request.Request(target_url, headers=headers)
-                with urllib.request.urlopen(page_req, timeout=8) as page_response:
-                    page_html = page_response.read().decode('utf-8', errors='ignore')
-                
-                # Clean structural page scripts & stylesheets
-                page_text = re.sub(r'<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>', '', page_html, flags=re.I)
-                page_text = re.sub(r'<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>', '', page_text, flags=re.I)
-                paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', page_text, re.DOTALL)
-                
-                for p in paragraphs:
-                    clean_p = re.sub(r'<[^>]*>', '', p).strip()
-                    if len(clean_p) > 30 and any(keyword in clean_p.lower() for keyword in ["result", "declared", "exam", "syllabus", "date", "may", "june", "timetable", "chapters"]):
-                        deep_text_pool.append(clean_p)
-                
-                if deep_text_pool:
-                    print("[System] Deep-page text successfully harvested.")
-                    return "--- SEARCH RESULTS SUMMARY ---\n" + "\n".join(snippets_context) + f"\n\n--- LIVE DEEP CONTENT FROM ({target_url}) ---\n" + "\n".join(deep_text_pool[:4])
-            except Exception as page_err:
-                print(f"[Warning] Couldn't read deep page content directly ({str(page_err)}). Falling back.")
-
-        print("[System Routing] Merging structural result metadata parameters...")
-        return "--- SEARCH RESULTS SUMMARY ---\n" + "\n".join(snippets_context) + "\n\n--- METADATA ENGINE FALLBACK CONTEXT ---\n" + "\n".join(metadata_pool)
-
-    except Exception as e:
-        return f"Web search processing failed: {str(e)}"
-
-# =====================================================================
-# STEP 3: PATH A SYLLABUS GATEWAY INTERCEPTOR
-# =====================================================================
-def fetch_live_board_syllabus(standard: str, subject: str, medium: str = "English") -> str:
-    """
-    Constructs a highly optimized state board index search lookup 
-    and harvests curriculum blueprints before any study materials are built.
-    """
-    search_query = f"site:ebalbharati.in OR site:mahahsscboard.in Maharashtra State Board {standard} {subject} {medium} medium chapters syllabus index blueprint"
-    return fetch_live_web_content(search_query)
-
-# =====================================================================
-# STEP 4: HYBRID METADATA EXTRACTOR (STANDARD, SUBJECT, MEDIUM)
-# =====================================================================
-def extract_educational_metadata(user_sentence: str) -> dict:
-    """
-    Extracts structural standard numbers via regex patterns first, 
-    then uses an instantaneous LLM pass to clean and normalize subjects and mediums.
-    """
-    print(f"[Parser] Analyzing metadata variables...")
-    metadata = {"standard": "10th", "subject": "Science", "medium": "English"}
-    lowered_input = user_sentence.lower()
-    
-    std_match = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:std|standard|class|gr|grade)\b', lowered_input)
-    if not std_match:
-        std_match = re.search(r'\b(?:std|standard|class|grade|std\.)\s*(\d{1,2})\b', lowered_input)
-    if std_match:
-        metadata["standard"] = f"{int(std_match.group(1))}th"
-
-    roman_map = {"ix": "9th", "x": "10th", "xi": "11th", "xii": "12th"}
-    for roman, std_str in roman_map.items():
-        if re.search(rf'\b{roman}\b', lowered_input):
-            metadata["standard"] = std_str
-            break
-
-    parsing_prompt = f"""
-    You are an automated code parsing script. Analyze this sentence and extract exactly 3 variables:
-    1. Standard: Must be formatted exactly like [1th, 2th... 10th, 11th, 12th]. 
-    2. Subject: Map the subject name (e.g., Geometry -> 'Mathematics', Biology/Photosynthesis/Chemistry -> 'Science', Civics -> 'Social Sciences').
-    3. Medium: 'English', 'Marathi', or 'Hindi'. (Default to 'English').
-
-    User Sentence: "{user_sentence}"
-    Regex Guess: {json.dumps(metadata)}
-
-    Output your response STRICTLY as a valid JSON object. No markdown backticks, no text preamble outside the JSON string boundaries.
-    """
-    try:
-        parser_agent = autogen.AssistantAgent(name="parser_agent", llm_config=llm_config, system_message="Output pure raw JSON strings only.")
-        user_proxy.clear_history()
-        parser_agent.clear_history()
-        user_proxy.initiate_chat(recipient=parser_agent, message=parsing_prompt, max_turns=1)
-        
-        # Cross-version safe history fetch logic to bypass NoneType ChatResult bugs
-        chat_history = user_proxy.chat_messages.get(parser_agent, [])
-        raw_json = str(chat_history[-1].get("content", "")).strip() if chat_history else ""
-        
-        if "```json" in raw_json: 
-            raw_json = raw_json.split("```json")[-1].split("```")[0].strip()
-        elif "```" in raw_json: 
-            raw_json = raw_json.split("```")[1].strip()
-
-        llm_metadata = json.loads(raw_json)
-        if all(k in llm_metadata for k in ["standard", "subject", "medium"]):
-            metadata.update(llm_metadata)
-    except Exception:
-        pass
-    
-    print(f"[Parser] Extracted Context Parameters -> CLASS: {metadata['standard']} | SUBJECT: {metadata['subject']} | MEDIUM: {metadata['medium']}")
-    return metadata
-
-# =====================================================================
-# STEP 5: INTENT CLASSIFIER RETAINED FROM DYNAMIC MODELLING
-# =====================================================================
-def classify_query_with_llm(question: str) -> str:
-    """ Uses the LLM to understand semantic intent without brittle keyword strings. """
-    print(f"[System] Determining routing lane via LLM evaluation...")
-    routing_prompt = f"""
-    Classify the incoming student question into exactly ONE of these categories:
-    - 'blocked': Irrelevant to school, educational tracks, or learning (e.g. pop music, recipes, jokes, stocks). Note that core scientific topics like 'photosynthesis', 'cellular respiration', 'gravity', 'algebra', 'chemistry', etc. are strictly educational and must NEVER be blocked.
-    - 'exam_info': Questions about dates, results, timetables, or announcements for ANY exam or board.
-    - 'quiz': Explicitly asking to generate a test, multiple-choice questions, or worksheets.
-    - 'study': Wanting a topic explained, taught, summarized, or demonstrated with notes (e.g., "create notes on photosynthesis").
-    
-    Question: "{question}"
-    Respond with exactly ONE word: blocked, exam_info, quiz, or study. No punctuation, no intro text.
-    """
-    try:
-        router_agent = autogen.AssistantAgent(name="router_agent", llm_config=llm_config, system_message="Output a single word category only.")
-        user_proxy.clear_history()
-        router_agent.clear_history()
-        user_proxy.initiate_chat(recipient=router_agent, message=routing_prompt, max_turns=1)
-        
-        # Safe history fetch
-        chat_history = user_proxy.chat_messages.get(router_agent, [])
-        raw_content = str(chat_history[-1].get("content", "")).lower().strip() if chat_history else "study"
-        intent = re.sub(r"[^a-z_]", "", raw_content)
-        return intent if intent in ["blocked", "exam_info", "quiz", "study"] else "study"
-    except Exception:
-        return "study"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{name}_{timestamp}.pdf"
 
 
 def normalize_chat_logs(messages, agent_name="assistant", user_question=""):
-    """
-    Standardizes chat lists into readable blocks for the PDF.
-    Strips raw code dictionary outputs and duplicates.
-    """
     normalized = []
-    seen_contents = set()
-    for msg in messages:
-        content = str(msg.get("content", "")).strip()
-        name = msg.get("name") or msg.get("role") or agent_name
-        if not content or isinstance(msg.get("content"), dict) or content == user_question.strip() or "--- SEARCH RESULTS SUMMARY ---" in content or "--- METADATA ENGINE FALLBACK CONTEXT ---" in content or content in seen_contents:
-            continue
-        
-        # Beautifully normalize Agent Senders for PDF Layout
-        display_name = str(name).replace("_agent", "").capitalize()
-        if "Quiz" in display_name:
-            display_name = "Model Question Paper"
-        elif "Concept" in display_name:
-            display_name = "Conceptual Explanation"
-        elif "Example" in display_name:
-            display_name = "Solved Examples"
-        elif "Notes" in display_name:
-            display_name = "Revision Notes"
-        elif "Web" in display_name or "Summary" in display_name:
-            display_name = "Verified Search Summary"
 
-        normalized.append({"name": display_name, "role": "assistant", "content": content})
-        seen_contents.add(content)
+    for msg in messages:
+        content = msg.get("content", "")
+
+        if not content:
+            continue
+
+        if user_question and content.strip() == user_question.strip():
+            continue
+
+        sender = msg.get("name") or msg.get("role") or agent_name
+
+        if sender in ["Admin", "user"]:
+            continue
+
+        if sender == "assistant":
+            sender = agent_name
+
+        normalized.append(
+            {
+                "name": sender,
+                "role": "assistant",
+                "content": content,
+            }
+        )
+
     return normalized
 
-# =====================================================================
-# STEP 6: ISOLATED WORKFLOW EXECUTION LAYOUTS
-# =====================================================================
-def execute_deterministic_study_flow(question: str):
-    """ Executes a clean sequential multi-agent chain (Path A Blueprint). """
-    pipeline_history = []
-    
-    print("[Pipeline] Dispatching tasks to Concept Agent...")
-    user_proxy.clear_history()
-    concept_agent.clear_history()
-    user_proxy.initiate_chat(recipient=concept_agent, message=question, max_turns=1)
-    
-    concept_messages = user_proxy.chat_messages.get(concept_agent, [])
-    concept_output = concept_messages[-1].get("content", "") if concept_messages else ""
-    pipeline_history.extend(normalize_chat_logs(concept_messages, "concept_agent", question))
 
-    print("[Pipeline] Dispatching tasks to Example Agent...")
-    ex_prompt = f"Based on this topic foundation:\n\n{concept_output}\n\nPlease generate a practical solved sample problem, scientific demonstration, or real-life scenario."
-    user_proxy.clear_history()
-    example_agent.clear_history()
-    user_proxy.initiate_chat(recipient=example_agent, message=ex_prompt, max_turns=1)
-    
-    example_messages = user_proxy.chat_messages.get(example_agent, [])
-    example_output = example_messages[-1].get("content", "") if example_messages else ""
-    pipeline_history.extend(normalize_chat_logs(example_messages, "example_agent", ex_prompt))
+def run_direct_agent(agent, question):
+    user_proxy.initiate_chat(
+        agent,
+        message=question,
+        max_turns=1,
+        clear_history=True,
+    )
 
-    print("[Pipeline] Dispatching tasks to Notes Agent...")
-    nt_prompt = f"Based on this demonstration output:\n\n{example_output}\n\nPlease extract concise revision notes and key learning points."
-    user_proxy.clear_history()
-    notes_agent.clear_history()
-    user_proxy.initiate_chat(recipient=notes_agent, message=nt_prompt, max_turns=1)
-    
-    notes_messages = user_proxy.chat_messages.get(notes_agent, [])
-    pipeline_history.extend(normalize_chat_logs(notes_messages, "notes_agent", nt_prompt))
+    messages = user_proxy.chat_messages[agent]
 
-    return pipeline_history
+    logs = normalize_chat_logs(
+        messages=messages,
+        agent_name=agent.name,
+        user_question=question,
+    )
 
-def run_web_search_flow(question: str):
-    web_intelligence = fetch_live_web_content(question)
-    enriched_prompt = f"Question: {question}\n\nWeb Data Context:\n{web_intelligence}\n\nSummarize the exact final answer below safely with strict clickable citations:"
-    user_proxy.clear_history()
-    web_summary_agent.clear_history()
-    user_proxy.initiate_chat(recipient=web_summary_agent, message=enriched_prompt, max_turns=1)
-    
-    web_messages = user_proxy.chat_messages.get(web_summary_agent, [])
-    return normalize_chat_logs(web_messages, "web_summary_agent", enriched_prompt)
+    # Keep only final useful response to avoid repeated PDF content
+    if logs:
+        return [logs[-1]]
 
-def run_quiz_flow(question: str):
-    user_proxy.clear_history()
-    quiz_agent.clear_history()
-    user_proxy.initiate_chat(recipient=quiz_agent, message=question, max_turns=1)
-    
-    quiz_messages = user_proxy.chat_messages.get(quiz_agent, [])
-    return normalize_chat_logs(quiz_messages, "quiz_agent", question)
+    return []
 
-# =====================================================================
-# STEP 7: MAIN PROCESS ROUTER & LOOP RUNTIME
-# =====================================================================
+
+def run_group_agent_flow(question):
+    agents = [
+        user_proxy,
+        orchestrator_agent,
+        planner_agent,
+        concept_agent,
+        example_agent,
+        notes_agent,
+        quiz_agent,
+    ]
+
+    def custom_speaker_selection(last_speaker: autogen.Agent, groupchat: autogen.GroupChat):
+        messages = groupchat.messages
+
+        if not messages:
+            return orchestrator_agent
+
+        content = messages[-1].get("content") or ""
+
+        done_tags = [
+            "[PLAN_DONE]",
+            "[CONCEPT_DONE]",
+            "[EXAMPLE_DONE]",
+            "[NOTES_DONE]",
+            "[QUIZ_DONE]",
+        ]
+
+        completed_count = sum(
+            1 for tag in done_tags
+            if any(tag in (m.get("content") or "") for m in messages)
+        )
+
+        if completed_count >= 1:
+            return None
+
+        if any(tag in content for tag in done_tags):
+            return None
+
+        if last_speaker == user_proxy:
+            return orchestrator_agent
+
+        if last_speaker == orchestrator_agent:
+            available_agents = {agent.name: agent for agent in groupchat.agents}
+
+            for agent_name, agent_obj in available_agents.items():
+                if agent_name in content:
+                    return agent_obj
+
+            return None
+
+        return None
+
+    groupchat = autogen.GroupChat(
+        agents=agents,
+        messages=[],
+        max_round=4,
+        speaker_selection_method=custom_speaker_selection,
+        enable_clear_history=True,
+    )
+
+    manager = autogen.GroupChatManager(
+        groupchat=groupchat,
+        llm_config=None,
+    )
+
+    user_proxy.initiate_chat(
+        manager,
+        message=question,
+        clear_history=True,
+    )
+
+    logs = normalize_chat_logs(
+        messages=groupchat.messages,
+        agent_name="education_agent",
+        user_question=question,
+    )
+
+    # Keep only final useful response
+    if logs:
+        return [logs[-1]]
+
+    return []
+
+
 def process_question(user_question: str):
     user_question = user_question.strip()
+
     if not user_question:
-        return {"answer": "Empty query description received.", "pdf": None}
+        return {
+            "type": "error",
+            "answer": "Please type a valid education-related question.",
+            "pdf": None,
+        }
 
-    # FIX: Maintain the original raw user query to generate a clean custom slug/filename
-    original_query = user_question
+    query_type = classify_query(user_question)
 
-    query_type = classify_query_with_llm(user_question)
+    if query_type in ["blocked", "unknown"]:
+        return {
+            "type": "blocked",
+            "answer": (
+                "Sorry, I can answer only education-related questions. "
+                "Please ask about studies, syllabus, exams, concepts, notes, or practice questions."
+            ),
+            "pdf": None,
+        }
 
-    if query_type == "blocked":
-        return {"answer": "I can only process educational queries regarding concepts, notes, syllabus updates, and exam records.", "pdf": None}
+    if query_type == "exam_info":
+        answer = answer_exam_info_question(user_question)
 
-    # Extract metadata metrics dynamically (Standard, Subject, Medium)
-    meta = extract_educational_metadata(user_sentence=user_question)
+        return {
+            "type": "exam_info",
+            "answer": answer,
+            "pdf": None,
+        }
 
-    # Intercept with Path A Core Curriculum Safeguards
-    # (Fetches the syllabus before generating any tests, quizzes, or explanations)
-    if query_type in ["study", "quiz"]:
-        raw_syllabus = fetch_live_board_syllabus(meta["standard"], meta["subject"], meta["medium"])
-        
-        # Intercept and clean empty scraper logs so we do not pass raw error strings to the LLM
-        if not raw_syllabus or "no text snippets" in raw_syllabus.lower() or "failed" in raw_syllabus.lower():
-            syllabus_context = f"Standard core study syllabus outline guidelines for Maharashtra State Board {meta['standard']} {meta['subject']} ({meta['medium']} Medium)."
-            ref_status = "Default Guidelines (Active)"
-        else:
-            syllabus_context = raw_syllabus
-            ref_status = "Live Portal Sync (Verified)"
-        
-        # =============================================================
-        # ELEGANT TERMINAL VERIFICATION DASHBOARD (unicode boxed logs)
-        # =============================================================
-        print("\n┌" + "─"*78 + "┐")
-        print(f"│ {'VERIFICATION ENGINE SYSTEM STATUS'.center(76)} │")
-        print("├" + "─"*78 + "┤")
-        print(f"│  [✓] Classified Intent : {query_type.upper().ljust(50)} │")
-        print(f"│  [✓] Standard Class    : {meta['standard'].ljust(50)} │")
-        print(f"│  [✓] Subject Domain    : {meta['subject'].ljust(50)} │")
-        print(f"│  [✓] Target Medium     : {meta['medium'].ljust(50)} │")
-        print("├" + "─"*78 + "┤")
-        print(f"│  [⇄] Board Syllabus Target Query:".ljust(79) + "│")
-        print(f"│      \"Maharashtra State Board {meta['standard']} {meta['subject']} chapters syllabus\"".ljust(79) + "│")
-        print("├" + "─"*78 + "┤")
-        print(f"│  [i] Reference Status  : {ref_status.ljust(50)} │")
-        preview = (syllabus_context[:65] + "...").replace("\n", " ").strip()
-        print(f"│  [i] Context Snippet   : {preview.ljust(50)} │")
-        print("└" + "─"*78 + "┘\n")
-
-        # Create structural XML-like markdown wrapper instead of messy bracket blocks
-        user_question = f"""
-<curriculum_directive>
-  <source_board>Maharashtra State Board of Secondary and Higher Secondary Education (MSBSHSE)</source_board>
-  <grade_level>{meta['standard']}</grade_level>
-  <subject_domain>{meta['subject']}</subject_domain>
-  <instructional_medium>{meta['medium']}</instructional_medium>
-  <verified_chapters_context>
-    {syllabus_context}
-  </verified_chapters_context>
-</curriculum_directive>
-
-<student_request>
-  {user_question}
-</student_request>
-
-<alignment_constraints>
-  1. Your educational explanation must align strictly with the official Maharashtra State Board standards for {meta['standard']} {meta['subject']}.
-  2. Accept standard academic sub-concepts (like 'integration' under 'Mathematics', or 'photosynthesis' under 'Life Processes') as fully valid even if the syllabus context above only lists parent chapters. Do not block valid science, math, or humanities sub-topics.
-</alignment_constraints>
-"""
-
-    # Direct routing across execution channels
     if query_type == "quiz":
-        chat_logs = run_quiz_flow(user_question)
-    elif query_type == "exam_info":
-        chat_logs = run_web_search_flow(user_question)
+        chat_logs = run_direct_agent(quiz_agent, user_question)
     else:
-        chat_logs = execute_deterministic_study_flow(user_question)
+        chat_logs = run_group_agent_flow(user_question)
 
-    if not chat_logs:
-        chat_logs = [{"name": "Teacher", "role": "assistant", "content": "Process loop finished execution cleanly."}]
+    output_filename = safe_pdf_filename(user_question)
 
-    # Format file naming outputs securely (Using original_query instead of modified wrapped question)
-    name_slug = "_".join(original_query.split()[:4]).lower()
-    name_slug = re.sub(r"[^a-zA-Z0-9_]", "", name_slug) or "study_material"
-    output_filename = f"{name_slug}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-
-    # DYNAMIC DOCUMENT TITLE GENERATOR: Resolves the "AI Educational Framework Report" issue by creating an elegant title based on standard and subject
-    clean_subj = meta.get("subject", "Academic study")
-    clean_std = meta.get("standard", "")
-    if query_type == "quiz":
-        dynamic_title = f"Model Question Paper - Class {clean_std} {clean_subj}"
-    elif query_type == "exam_info":
-        dynamic_title = f"Academic Schedule Report - Class {clean_std} {clean_subj}"
-    else:
-        dynamic_title = f"Curriculum Study Notes - Class {clean_std} {clean_subj}"
-
-    # Pass the beautifully polished dynamic title to avoid dry query strings or messy generic headers at the top
     compiled_pdf = compile_chat_history_to_pdf(
         chat_history=chat_logs,
-        user_query=dynamic_title,
+        user_query=user_question,
         llm_config=llm_config,
         output_dir=OUTPUT_DIR,
         output_filename=output_filename,
+        report_title="AI Education Report",
     )
 
-    # Compiles the actual markdown conversation logs from the agents so that your Web UI can display them directly!
-    compiled_text_answer = ""
-    for log in chat_logs:
-        sender = log.get("name", "Teacher")
-        content = log.get("content", "")
-        compiled_text_answer += f"### {sender}\n{content}\n\n"
-        
-    if not compiled_text_answer.strip():
-        compiled_text_answer = "The process completed, but no visible textual responses were captured."
+    update_student_memory(user_question)
 
-    return {"answer": compiled_text_answer, "pdf": compiled_pdf}
+    return {
+        "type": query_type,
+        "answer": "Your educational response has been generated successfully. Please download the PDF.",
+        "pdf": compiled_pdf,
+    }
+
 
 if __name__ == "__main__":
     print("\n" + "=" * 70)
-    print("AI Teacher Agent: Combined Two-Stage Scraper & Path A Curriculum Check")
+    print("AI Education Teacher Agent")
+    print("Education-only mode enabled")
+    print("Type 'exit' or 'quit' to stop")
     print("=" * 70 + "\n")
 
     while True:
-        user_q = input("What would you like to ask? ").strip()
-        if user_q.lower() in ["exit", "quit"]:
+        user_question = input("What would you like to learn today? ").strip()
+
+        if user_question.lower() in ["exit", "quit"]:
+            print("\nShutting down AI Education Teacher Agent. Happy studying!\n")
             break
 
-        result = process_question(user_q)
-        print(f"\nStatus: {result['answer']}")
+        result = process_question(user_question)
+
+        print("\n" + "=" * 70)
+        print(result["answer"])
+
         if result.get("pdf"):
-            print(f"File Output Path: {result['pdf']}\n")
+            print(f"\nPDF generated: {result['pdf']}")
+
+        print("=" * 70 + "\n")
