@@ -58,16 +58,11 @@ concept_agent = autogen.AssistantAgent(
     
     CRITICAL RESEARCH-STYLE CITATION DIRECTIONS:
     1. Do NOT put your citations or references at the very top or in a single isolated block at the very bottom of the entire document.
-    2. Instead, use a clean research-paper style:
-       - Place numerical reference markers like [1], [2] directly inside the sentences/paragraphs next to the specific concepts, definitions, or equations.
-       - Immediately below that paragraph or sub-section, add a small, italicized, and bulleted 'Section References' list explaining those markers.
-    3. Format each listed reference exactly as:
-       `* [1] Chapter {Number}: {Chapter Name}, Page {Number}, {Book Name} ({Board Name})`
-       - Example: "According to the fundamental theorem of calculus, integration is the reverse process of differentiation [1].
-         
-         *Section References:*
-         * [1] Chapter 3: Indefinite Integration, Page 104, Mathematics Part II (Maharashtra State Board)"
-    4. Maintain this clean, contextual, and professional citation flow throughout your explanation."""
+    2. Instead, use a clean inline parenthetical style:
+       - Place precise, academic parenthetical citations directly inside the sentences/paragraphs right next to the specific concepts, definitions, or equations.
+       - Format: (Chapter {Number}: {Chapter Name}, Page {Number}, {Book Name}, {Board Name})
+       - Example: "According to the fundamental theorem of calculus, integration is the reverse process of differentiation (Chapter 3: Indefinite Integration, Page 104, Mathematics Part II, Maharashtra State Board)."
+    3. Strictly do NOT append any separate 'Section References' or trailing reference footnotes at the bottom of your output."""
 )
 
 example_agent = autogen.AssistantAgent(
@@ -76,11 +71,9 @@ example_agent = autogen.AssistantAgent(
     system_message="""You are example_agent. Provide step-by-step solved problems, experiments, or diagrams based on the concept introduced.
     
     CRITICAL RESEARCH-STYLE CITATION DIRECTIONS:
-    1. Integrate inline numerical reference markers (e.g., [1]) directly next to each problem statement.
-    2. Immediately below the solution, provide the specific curriculum mapping for that problem:
-       *Section References:*
-       * [1] Chapter {Number}: {Chapter Name}, Exercise {Number}, Page {Number}, {Book Name} ({Board Name})
-    3. Ensure no standalone reference blocks sit isolated at the very top or very bottom of the entire response."""
+    1. Integrate inline parenthetical reference markers directly inside the text adjacent to relevant problem steps.
+       - Format: (Chapter {Number}: {Chapter Name}, Exercise {Number}, Page {Number}, {Book Name}, {Board Name})
+    2. Strictly do NOT append any separate lists of references or section summary blocks at the bottom."""
 )
 
 notes_agent = autogen.AssistantAgent(
@@ -89,11 +82,10 @@ notes_agent = autogen.AssistantAgent(
     system_message="""You are notes_agent. Compile quick summary revision notes, bullet points, and core formulas.
     
     CRITICAL RESEARCH-STYLE CITATION DIRECTIONS:
-    1. Place numerical reference markers (e.g., [1]) directly next to key formulas, laws, or summary headers.
-    2. Directly underneath each notes block or checklist, include:
-       *Section References:*
-       * [1] Chapter {Number}: {Chapter Name}, Page {Number}, {Book Name} ({Board Name})
-    3. Keep references hyper-local to the relevant notes instead of piling them up at the top or bottom of the file."""
+    1. Place parenthetical references directly inline right next to core formulas or summary headers.
+       - Format: (Chapter {Number}: {Chapter Name}, Page {Number}, {Book Name}, {Board Name})
+       - Example: "Integration by Parts: ∫ u v dx = u ∫ v dx - ∫ [u' * ∫ v dx] dx (Chapter 3: Indefinite Integration, Page 120, Mathematics Part II, Maharashtra State Board)."
+    2. Keep citations integrated and localized. Do not create any trailing reference tables or lists at the bottom."""
 )
 
 quiz_agent = autogen.AssistantAgent(
@@ -102,33 +94,30 @@ quiz_agent = autogen.AssistantAgent(
     system_message="""You are quiz_agent. You are an expert examination board specialist. You do NOT generate simple, flat lists of basic questions. Instead, you design professional, highly structured, and authentic Model Question Papers modeled exactly after official board examination layouts.
 
     CRITICAL BOARD QUESTION PAPER FORMATTING DIRECTIONS:
-    1. EXAMINATION HEADER (Must be centered using markdown):
-       - Center-align the Board Name (e.g., **MAHARASHTRA STATE BOARD OF SECONDARY & HIGHER SECONDARY EDUCATION**)
-       - Center-align the Exam Type (e.g., **MOCK / MODEL QUESTION PAPER (2025-2026 Session)**)
-       - Center-align the Grade & Subject (e.g., **CLASS XII / HSC - MATHEMATICS PART II** or **CLASS X / SSC - ENGLISH**)
-    2. EXAM PARAMETERS BLOCK:
-       - Create a clean parallel columns layout or space-separated row for Time and Max Marks:
-         `Time: 3 Hours 15 Minutes`                                 `Max. Marks: 70`
-       - Add a solid horizontal rule (---) underneath this parameter row.
+    1. EXAMINATION HEADER (Must be centered beautifully using HTML tags):
+       - Do NOT include any large, raw State Board Names (e.g. "MAHARASHTRA STATE BOARD...") at the very top of the question paper.
+       - Directly start with the centered and bolded Exam Type and Session:
+         <center><b>MOCK / MODEL QUESTION PAPER (2025-2026 Session)</b></center>
+       - Follow immediately with the centered and bolded Grade Level & Subject:
+         <center><b>CLASS [STANDARD] - [SUBJECT]</b></center>
+    2. EXAM PARAMETERS ROW:
+       - Place the Time Allowed and Maximum Marks in a clean, space-separated single-line layout directly underneath the header block:
+         `Time Allowed: 2 Hours 30 Minutes`                                   `Maximum Marks: 60`
+       - Add a solid horizontal rule (---) immediately underneath this parameters row to divide it from the instructions.
     3. GENERAL INSTRUCTIONS:
-       - Provide a clean, numbered list of standard board instructions (e.g., "1. The first 15 minutes are allotted for reading...", "2. All questions are compulsory...", "3. Figures to the right indicate full marks...").
-    4. STRUCTURAL SECTIONS / PARTS (Must be beautifully segmented):
-       - PART A: Objective / Multiple Choice Questions (MCQs).
-         - Section Instruction: "I. Answer all the questions. Each question carries ONE mark. [1 x 10 = 10 Marks]"
-         - Align question text left and place marks right-aligned.
-         - Format options clearly as:
-           a) [Option A]      b) [Option B]      c) [Option C]      d) [Option D]
-       - PART B: Short Answer Questions.
-         - Section Instruction: "II. Answer any FIVE questions. Each question carries TWO marks. [2 x 5 = 10 Marks]"
-       - PART C: Medium Answer Questions.
-         - Section Instruction: "III. Answer any FIVE questions. Each question carries THREE marks. [3 x 5 = 15 Marks]"
-       - PART D: Long Answer / Long Proofs / Essay Questions.
-         - Section Instruction: "IV. Answer any SEVEN questions. Each question carries FIVE marks. [5 x 7 = 35 Marks]"
-    5. INTEGRATED RESEARCH-STYLE CITATIONS & MARKS:
-       - Append the marks and the specific curriculum chapter page reference to the right or at the end of each question using a clean, formal academic tag.
-       - Format: "... [Ch 3: Pg. 118, Math Part II (Maharashtra State Board)] [5 Marks]"
-    6. NON-ENGLISH COMPATIBILITY RULE (VERY IMPORTANT to prevent '?????' unicode errors):
-       - If generating a Marathi, Hindi, or any other non-English language paper, you MUST use a bilingual dual-medium style. Provide clear Latin/English transliterations or parallel English translations alongside the native script (e.g., "प्रश्न १. (Question 1)..." or transliterated as "Prashna 1..."), ensuring that standard PDF rendering engines (which do not support raw Devanagari fonts) can compile and display every word cleanly without displaying raw question marks ('?????') or boxes."""
+       - Provide a clean, numbered list of standard exam instructions (e.g., "1. All questions are compulsory.", "2. Figures to the right indicate full marks.", "3. Candidates are allowed 15 minutes of reading time before starting.").
+    4. STRUCTURAL PARTS & SECTIONS:
+       - PART A (Objective Type MCQs): "I. Answer all the questions. Each question carries ONE mark. [1 x 10 = 10 Marks]"
+         - Group options cleanly on a single horizontal row or column:
+           a) [Option A]       b) [Option B]       c) [Option C]       d) [Option D]
+       - PART B (Short Answer Questions): "II. Answer any FIVE questions. Each question carries TWO marks. [2 x 5 = 10 Marks]"
+       - PART C (Medium Answer Questions): "III. Answer any FIVE questions. Each question carries THREE marks. [3 x 5 = 15 Marks]"
+       - PART D (Long Answer / Detailed Problems): "IV. Answer any SEVEN questions. Each question carries FIVE marks. [5 x 7 = 35 Marks]"
+    5. STRICT NO-CITATION RULE FOR PAPERS:
+       - Question papers must look authentic and realistic. Do NOT include any textbook page references or curriculum citations (neither parenthetical nor footnotes) inside the exam paper itself.
+       - Place the question marks right-aligned on the same line as the question (e.g., `[5 Marks]`).
+    6. BILINGUAL MULTI-MEDIUM RULE (For non-English language papers):
+       - If generating papers for Marathi, Hindi, or non-Latin scripts, you must provide clean parallel English translations or transliterated subtitles next to the native text so standard PDF engines can compile without displaying '????' blocks."""
 )
 
 web_summary_agent = autogen.AssistantAgent(
@@ -223,7 +212,7 @@ def fetch_live_web_content(query: str) -> str:
                 metadata_pool.append(f"Result Node [{i}]: Title: {title} | Snippet: {snippet} | Link: {current_url or 'N/A'}")
 
         deep_text_pool = []
-        # Stage 2: Click the primary target link and parse deep text
+        # Stage 2: Click the primary target link and extract deep page content
         if target_url:
             print(f"[Stage 2] Deep-scraping target page text from: {target_url}...")
             try:
@@ -366,7 +355,21 @@ def normalize_chat_logs(messages, agent_name="assistant", user_question=""):
         name = msg.get("name") or msg.get("role") or agent_name
         if not content or isinstance(msg.get("content"), dict) or content == user_question.strip() or "--- SEARCH RESULTS SUMMARY ---" in content or "--- METADATA ENGINE FALLBACK CONTEXT ---" in content or content in seen_contents:
             continue
-        normalized.append({"name": str(name).replace("_agent", "").capitalize(), "role": "assistant", "content": content})
+        
+        # Beautifully normalize Agent Senders for PDF Layout
+        display_name = str(name).replace("_agent", "").capitalize()
+        if "Quiz" in display_name:
+            display_name = "Model Question Paper"
+        elif "Concept" in display_name:
+            display_name = "Conceptual Explanation"
+        elif "Example" in display_name:
+            display_name = "Solved Examples"
+        elif "Notes" in display_name:
+            display_name = "Revision Notes"
+        elif "Web" in display_name or "Summary" in display_name:
+            display_name = "Verified Search Summary"
+
+        normalized.append({"name": display_name, "role": "assistant", "content": content})
         seen_contents.add(content)
     return normalized
 
@@ -442,7 +445,7 @@ def process_question(user_question: str):
         return {"answer": "I can only process educational queries regarding concepts, notes, syllabus updates, and exam records.", "pdf": None}
 
     # Extract metadata metrics dynamically (Standard, Subject, Medium)
-    meta = extract_educational_metadata(user_question)
+    meta = extract_educational_metadata(user_sentence=user_question)
 
     # Intercept with Path A Core Curriculum Safeguards
     # (Fetches the syllabus before generating any tests, quizzes, or explanations)
@@ -451,7 +454,7 @@ def process_question(user_question: str):
         
         # Intercept and clean empty scraper logs so we do not pass raw error strings to the LLM
         if not raw_syllabus or "no text snippets" in raw_syllabus.lower() or "failed" in raw_syllabus.lower():
-            syllabus_context = f"Standard core study guidelines for Maharashtra State Board {meta['standard']} {meta['subject']} ({meta['medium']} Medium)."
+            syllabus_context = f"Standard core study syllabus outline guidelines for Maharashtra State Board {meta['standard']} {meta['subject']} ({meta['medium']} Medium)."
             ref_status = "Default Guidelines (Active)"
         else:
             syllabus_context = raw_syllabus
@@ -509,36 +512,25 @@ def process_question(user_question: str):
     if not chat_logs:
         chat_logs = [{"name": "Teacher", "role": "assistant", "content": "Process loop finished execution cleanly."}]
 
-    # Prepend the beautifully formatted Curriculum Header to chat_logs so it appears styled as an Assistant entry in the PDF
-    if query_type in ["study", "quiz"]:
-        curriculum_header = {
-            "name": "Curriculum Board",
-            "role": "assistant",
-            "content": f"""### 📋 Maharashtra State Board Curriculum Alignment Checklist
-* **Academic Level:** {meta['standard']}
-* **Topic Domain:** {meta['subject']}
-* **Instructional Medium:** {meta['medium']} Medium
-* **Reference Status:** {ref_status}
-
-#### 🔍 Scraped Board Syllabus & Outline
-> {syllabus_context}
-
-#### 🎯 Content Boundaries & Alignment Rules
-1. Educational notes, practice questions, and study plans are strictly calibrated according to **Maharashtra State Board (MSBSHSE)** directives.
-2. Academic sub-concepts (like *integration* or *derivatives* under Mathematics) are dynamically mapped to their parent chapters within the State Board curriculum guidelines.
----"""
-        }
-        chat_logs.insert(0, curriculum_header)
-
     # Format file naming outputs securely (Using original_query instead of modified wrapped question)
     name_slug = "_".join(original_query.split()[:4]).lower()
     name_slug = re.sub(r"[^a-zA-Z0-9_]", "", name_slug) or "study_material"
     output_filename = f"{name_slug}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 
-    # FIX: Pass the clean original_query to avoid giant nested prompts inside the PDF header layout
+    # DYNAMIC DOCUMENT TITLE GENERATOR: Resolves the "AI Educational Framework Report" issue by creating an elegant title based on standard and subject
+    clean_subj = meta.get("subject", "Academic study")
+    clean_std = meta.get("standard", "")
+    if query_type == "quiz":
+        dynamic_title = f"Model Question Paper - Class {clean_std} {clean_subj}"
+    elif query_type == "exam_info":
+        dynamic_title = f"Academic Schedule Report - Class {clean_std} {clean_subj}"
+    else:
+        dynamic_title = f"Curriculum Study Notes - Class {clean_std} {clean_subj}"
+
+    # Pass the beautifully polished dynamic title to avoid dry query strings or messy generic headers at the top
     compiled_pdf = compile_chat_history_to_pdf(
         chat_history=chat_logs,
-        user_query=original_query,
+        user_query=dynamic_title,
         llm_config=llm_config,
         output_dir=OUTPUT_DIR,
         output_filename=output_filename,
