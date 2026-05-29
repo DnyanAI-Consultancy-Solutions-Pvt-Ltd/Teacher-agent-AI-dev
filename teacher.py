@@ -8,7 +8,12 @@ from dotenv import load_dotenv
 from datetime import datetime
 
 from pdf_compiler import compile_chat_history_to_pdf
-from tools import search_syllabus_tool, google_search_tool
+from tools import (
+    search_syllabus_tool,
+    google_search_tool,
+    build_learning_references,
+    get_minimal_citation,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning, module="flaml")
 
@@ -104,6 +109,31 @@ def classify_query(question: str) -> str:
     return "unknown"
 
 
+def append_reference_metadata(chat_logs, user_question):
+    """
+    Adds Explore More / reference metadata to the final agent output.
+    This avoids adding references repeatedly across the document.
+    """
+    if not chat_logs:
+        return chat_logs
+
+    try:
+        reference_block = build_learning_references(user_question)
+
+        if reference_block:
+            chat_logs[-1]["content"] = (
+                chat_logs[-1].get("content", "").strip()
+                + "\n\n"
+                + reference_block
+            )
+
+    except Exception as e:
+        fallback_ref = f"\n\n---REFERENCE_METADATA_START---\nCitation Hint: {get_minimal_citation(user_question)}\nExplore More:\n1. NCERT / State Board official textbook\n2. Official syllabus\n---REFERENCE_METADATA_END---"
+        chat_logs[-1]["content"] = chat_logs[-1].get("content", "").strip() + fallback_ref
+
+    return chat_logs
+
+
 def answer_exam_info_question(question: str) -> str:
     search_query = f"{question} official latest notification exam date schedule"
     search_results = google_search_tool(search_query, num_results=5)
@@ -180,7 +210,7 @@ Rules:
 - If class/standard/board is mentioned, use syllabus context where available.
 - Keep the plan suitable for the student's level.
 - Do not create quiz unless explicitly requested.
-- Add one minimal reference line only near the end, like: Ref: NCERT / State Board syllabus.
+- Do not create long bibliography; references will be added by the PDF compiler.
 - End with [PLAN_DONE].
 """
 )
@@ -199,8 +229,7 @@ Rules:
 - Use examples only where useful.
 - Use LaTeX notation for math where needed.
 - Do not generate quiz unless explicitly requested.
-- Add minimal citation/reference only once, not after every paragraph.
-- Citation format must be short, like: Ref: NCERT / State Board textbook.
+- Do not add long citation lists; references will be added by the PDF compiler.
 - End with [CONCEPT_DONE].
 """
 )
@@ -218,7 +247,7 @@ Rules:
 - Format as Problem, Step-by-Step Solution, Final Answer where useful.
 - Use LaTeX notation for math where needed.
 - Do not create full paper sets unless explicitly requested.
-- Add one minimal reference line only, like: Ref: NCERT / State Board textbook.
+- Do not add long citation lists; references will be added by the PDF compiler.
 - End with [EXAMPLE_DONE].
 """
 )
@@ -235,8 +264,7 @@ Rules:
 - Keep notes exam-friendly and easy to revise.
 - Use LaTeX notation for formulas where needed.
 - Do not create quiz unless explicitly requested.
-- Add minimal citation/reference only once near the top or bottom.
-- Citation format must be short, like: Ref: NCERT / State Board textbook.
+- Do not add long citation lists; references will be added by the PDF compiler.
 - End with [NOTES_DONE].
 """
 )
@@ -257,11 +285,8 @@ Strict Rules:
 - Include a professional header.
 - Include class, subject, time, maximum marks, sections, questions, and answer key.
 - Match class, subject, topic, and difficulty if provided.
-- Do not put citation after every question.
-- Add only one minimal reference line near the top-right or near the title, like:
-  Ref: NCERT / State Board syllabus
-- Keep reference very short.
-- No long source list.
+- Do not put citations after every question.
+- Do not add long citation lists; references will be added by the PDF compiler.
 - End with [QUIZ_DONE].
 """
 )
@@ -339,7 +364,6 @@ def run_direct_agent(agent, question):
         user_question=question,
     )
 
-    # Keep only final useful response to avoid repeated PDF content
     if logs:
         return [logs[-1]]
 
@@ -423,7 +447,6 @@ def run_group_agent_flow(question):
         user_question=question,
     )
 
-    # Keep only final useful response
     if logs:
         return [logs[-1]]
 
@@ -466,6 +489,8 @@ def process_question(user_question: str):
     else:
         chat_logs = run_group_agent_flow(user_question)
 
+    chat_logs = append_reference_metadata(chat_logs, user_question)
+
     output_filename = safe_pdf_filename(user_question)
 
     compiled_pdf = compile_chat_history_to_pdf(
@@ -475,6 +500,7 @@ def process_question(user_question: str):
         output_dir=OUTPUT_DIR,
         output_filename=output_filename,
         report_title="AI Education Report",
+        citation_hint=get_minimal_citation(user_question),
     )
 
     update_student_memory(user_question)

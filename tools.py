@@ -1,10 +1,13 @@
 import os
+import re
+import json
 import requests
 from typing_extensions import Annotated
 from duckduckgo_search import DDGS
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 # ─────────────────────────────────────────
 # GOOGLE SEARCH TOOL
@@ -20,10 +23,6 @@ def google_search_tool(
     Required .env values:
     GOOGLE_API_KEY=your_google_api_key
     GOOGLE_CSE_ID=your_google_custom_search_engine_id
-
-    Important:
-    - This function returns SEARCH_ERROR_* text for failures.
-    - teacher.py should check SEARCH_ERROR before sending results to any agent.
     """
 
     google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -55,7 +54,6 @@ def google_search_tool(
     try:
         response = requests.get(url, params=params, timeout=20)
 
-        # Handle common Google API errors clearly before raise_for_status()
         if response.status_code == 400:
             return (
                 "SEARCH_ERROR_400_GOOGLE_BAD_REQUEST: Google rejected the request. "
@@ -71,7 +69,7 @@ def google_search_tool(
         if response.status_code == 403:
             return (
                 "SEARCH_ERROR_403_GOOGLE_API_FORBIDDEN: Google Custom Search API rejected the request. "
-                "Check these points: Custom Search API enabled, billing enabled, valid API key, correct GOOGLE_CSE_ID, "
+                "Check: Custom Search API enabled, billing enabled, valid API key, correct GOOGLE_CSE_ID, "
                 "and API key restrictions allow Custom Search JSON API."
             )
 
@@ -80,7 +78,7 @@ def google_search_tool(
                 "SEARCH_ERROR_429_GOOGLE_QUOTA_EXCEEDED: Google Search quota/rate limit exceeded. "
                 "Check Google Cloud quota and billing."
             )
-        
+
         response.raise_for_status()
         data = response.json()
 
@@ -119,15 +117,10 @@ def google_search_tool(
 
 
 # ─────────────────────────────────────────
-# HELPER: CHECK WHETHER SEARCH FAILED
+# SEARCH ERROR CHECK
 # ─────────────────────────────────────────
 
 def is_search_error(search_result: str) -> bool:
-    """
-    Returns True when a search tool result is not usable as valid search data.
-    Use this before passing search results to an agent.
-    """
-
     if not search_result:
         return True
 
@@ -145,6 +138,201 @@ def is_search_error(search_result: str) -> bool:
 
 
 # ─────────────────────────────────────────
+# SEARCH RESULT PARSING
+# ─────────────────────────────────────────
+
+def parse_search_sources(search_text: str):
+    """
+    Converts plain search output into structured source list.
+    """
+    if not search_text or is_search_error(search_text):
+        return []
+
+    sources = []
+    blocks = re.split(r"\nSource\s+\d+:\n", "\n" + search_text)
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        title_match = re.search(r"Title:\s*(.*)", block)
+        link_match = re.search(r"Link:\s*(.*)", block)
+        snippet_match = re.search(r"Snippet:\s*(.*)", block, re.DOTALL)
+
+        title = title_match.group(1).strip() if title_match else "Unknown source"
+        link = link_match.group(1).strip() if link_match else ""
+        snippet = snippet_match.group(1).strip() if snippet_match else ""
+
+        sources.append(
+            {
+                "title": title,
+                "link": link,
+                "snippet": snippet,
+            }
+        )
+
+    return sources
+
+
+def infer_subject_from_query(query: str) -> str:
+    q = query.lower()
+
+    subject_map = {
+        "biology": "Biology",
+        "botany": "Biology",
+        "zoology": "Biology",
+        "math": "Mathematics",
+        "maths": "Mathematics",
+        "algebra": "Mathematics",
+        "geometry": "Mathematics",
+        "physics": "Physics",
+        "chemistry": "Chemistry",
+        "science": "Science",
+        "history": "History",
+        "geography": "Geography",
+        "english": "English",
+        "python": "Computer Science",
+        "coding": "Computer Science",
+        "computer": "Computer Science",
+    }
+
+    for keyword, subject in subject_map.items():
+        if keyword in q:
+            return subject
+
+    return "General Education"
+
+
+def infer_class_from_query(query: str) -> str:
+    q = query.lower()
+
+    patterns = [
+        r"class\s*(\d+)",
+        r"(\d+)(st|nd|rd|th)\s*class",
+        r"standard\s*(\d+)",
+        r"std\s*(\d+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, q)
+        if match:
+            return f"Class {match.group(1)}"
+
+    if "ssc" in q:
+        return "SSC"
+    if "hsc" in q:
+        return "HSC"
+
+    return "Class not specified"
+
+
+def infer_board_from_query(query: str) -> str:
+    q = query.lower()
+
+    if "cbse" in q:
+        return "CBSE"
+    if "ncert" in q:
+        return "NCERT"
+    if "maharashtra" in q or "state board" in q or "ssc" in q or "hsc" in q:
+        return "Maharashtra State Board"
+
+    return "NCERT / State Board"
+
+
+def infer_reference_hint(query: str) -> str:
+    """
+    Creates a short, safe citation hint.
+    Page numbers are intentionally shown as 'verify from textbook'
+    unless an official source explicitly gives pages.
+    """
+    subject = infer_subject_from_query(query)
+    class_name = infer_class_from_query(query)
+    board = infer_board_from_query(query)
+
+    return f"Ref: {board} {subject} {class_name}, chapter/page as per official textbook"
+
+
+# ─────────────────────────────────────────
+# EXPLORE MORE / CITATION BUILDER
+# ─────────────────────────────────────────
+
+def build_learning_references(
+    user_query: Annotated[str, "User's education-related query"],
+    num_results: Annotated[int, "Number of references/resources to return"] = 4,
+) -> str:
+    """
+    Builds a compact 'Explore More' section with:
+    - textbook/board reference hint
+    - likely chapters/resources
+    - official links from Google results where available
+
+    This is meant to be appended by teacher agents or PDF compiler.
+    """
+
+    subject = infer_subject_from_query(user_query)
+    class_name = infer_class_from_query(user_query)
+    board = infer_board_from_query(user_query)
+    citation_hint = infer_reference_hint(user_query)
+
+    search_query = (
+        f"{board} {class_name} {subject} syllabus textbook chapter "
+        f"{user_query} official"
+    )
+
+    search_result = google_search_tool(search_query, num_results=num_results)
+
+    references = []
+    sources = parse_search_sources(search_result)
+
+    for source in sources[:num_results]:
+        title = source.get("title", "")
+        link = source.get("link", "")
+        snippet = source.get("snippet", "")
+
+        if title and link:
+            references.append(
+                {
+                    "title": title,
+                    "link": link,
+                    "snippet": snippet,
+                }
+            )
+
+    output = ""
+    output += "\n\n---REFERENCE_METADATA_START---\n"
+    output += f"Citation Hint: {citation_hint}\n"
+    output += f"Board/Book: {board}\n"
+    output += f"Class: {class_name}\n"
+    output += f"Subject: {subject}\n"
+    output += "Chapter/Page: Use the matching official textbook chapter; page number may vary by edition.\n"
+
+    if references:
+        output += "Explore More:\n"
+        for idx, ref in enumerate(references, start=1):
+            output += f"{idx}. {ref['title']}\n"
+            output += f"   Link: {ref['link']}\n"
+    else:
+        output += "Explore More:\n"
+        output += f"1. {board} {subject} {class_name} official textbook\n"
+        output += f"2. {board} {subject} {class_name} syllabus\n"
+        output += "3. NCERT / State Board textbook exercises\n"
+
+    output += "---REFERENCE_METADATA_END---\n"
+
+    return output.strip()
+
+
+def get_minimal_citation(
+    user_query: Annotated[str, "User's education-related query"],
+) -> str:
+    """
+    Returns one-line minimal citation suitable for PDF footer/corner.
+    """
+    return infer_reference_hint(user_query)
+
+
+# ─────────────────────────────────────────
 # OFFICIAL EXAM INFO SEARCH TOOL
 # ─────────────────────────────────────────
 
@@ -153,14 +341,6 @@ def search_exam_info_tool(
 ) -> str:
     """
     Searches latest exam information from official or trusted education sources.
-    Use this for:
-    - exam dates
-    - timetables
-    - admit cards
-    - results
-    - registration dates
-    - counselling schedules
-    - official notifications
     """
 
     official_query = (
@@ -191,9 +371,6 @@ def search_syllabus_tool(
     """
     Searches dynamically for Maharashtra State Board syllabus matching
     the student's exact class and learning topic.
-
-    First tries Google Custom Search.
-    If Google is not configured or fails, falls back to DuckDuckGo.
     """
 
     query = (
@@ -203,13 +380,11 @@ def search_syllabus_tool(
 
     print(f"\n[Tool Execution] Searching syllabus for: {query}...\n")
 
-    # First preference: Google Search
     google_result = google_search_tool(query, num_results=3)
 
     if not is_search_error(google_result):
         return google_result
 
-    # Fallback: DuckDuckGo
     print("\n[Tool Execution] Google search unavailable. Trying DuckDuckGo fallback...\n")
 
     try:
@@ -246,3 +421,23 @@ def search_syllabus_tool(
             f"SEARCH_ERROR_DUCKDUCKGO: Syllabus search failed due to an error: {str(e)}. "
             "Proceed with general textbook scope only, and clearly mention that official syllabus could not be verified."
         )
+
+
+# ─────────────────────────────────────────
+# STRUCTURED REFERENCE JSON HELPER
+# ─────────────────────────────────────────
+
+def build_reference_json(user_query: str) -> str:
+    """
+    Optional helper if you want structured references later.
+    Returns JSON string so AutoGen tools can pass it safely.
+    """
+    metadata = {
+        "citation_hint": infer_reference_hint(user_query),
+        "board": infer_board_from_query(user_query),
+        "class": infer_class_from_query(user_query),
+        "subject": infer_subject_from_query(user_query),
+        "chapter_page_note": "Chapter/page should be verified from the exact textbook edition.",
+    }
+
+    return json.dumps(metadata, indent=2)
