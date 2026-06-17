@@ -71,7 +71,7 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
     pdf.add_page()
     
     # ──────────────────────────────────────────────────────────────────────────
-    # HEADER LOGIC MATRICES
+    # LAYOUT TYPE HEADERS INITIALIZATION
     # ──────────────────────────────────────────────────────────────────────────
     if variety == "paperset":
         pdf.set_y(28)
@@ -97,7 +97,7 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
         curr_y = pdf.get_y()
         pdf.cell(90, 5, f"TIME ALLOWED: {ctx.get('time_allowed', '3 Hours')}", align="L")
         pdf.set_xy(106, curr_y)
-        pdf.cell(88, 5, f"MAXIMUM MARKS: {ctx.get('max_marks', 80)} MARKS", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(88, 5, f"MAXIMUM MARKS: {ctx.get('max_marks', 100)} MARKS", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(2)
         pdf.line(16, pdf.get_y(), 194, pdf.get_y())
         pdf.ln(5)
@@ -117,7 +117,6 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
         pdf.line(16, pdf.get_y(), 194, pdf.get_y())
         pdf.ln(4)
         
-        # High-End Table Header Layout
         pdf.set_fill_color(30, 41, 59)
         pdf.set_font(pdf._active_font, "B", 10)
         pdf.set_text_color(255, 255, 255)
@@ -139,9 +138,7 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
         pdf.line(16, pdf.get_y(), 194, pdf.get_y())
         pdf.ln(5)
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # LINE EXTRACTION RENDERING LOOP
-    # ──────────────────────────────────────────────────────────────────────────
+    # --- MAIN PAGE LINE ITERATOR ---
     in_answer_key = False
     skipping_lines = False
     
@@ -152,15 +149,53 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
             
         clean_line = safe_text_encode(stripped_line)
         
-        if pdf.get_y() > 250:
+        # --- FIXED CONVERSATIONAL MUTE FILTERS ---
+        if not include_answer_key and clean_line.startswith("Answer:"):
+            continue
+
+        if any(term in clean_line for term in [
+            "Specialist_Creator matches", "format blueprint ordered", "full text block exactly",
+            "string appended at", "Task Review", "Content Review", "Formatting Review", "Grammar Review",
+            "The content text provided", "Here is the full text", "with the string '' appended"
+        ]):
+            continue
+
+        if pdf.get_y() > 235:
             pdf.add_page()
             if variety == "official_syllabus":
-                # Reprint headers on new page boundaries for table stability
                 pdf.set_fill_color(30, 41, 59)
                 pdf.set_font(pdf._active_font, "B", 10)
                 pdf.set_text_color(255, 255, 255)
                 pdf.cell(55, 8, " CHAPTER / UNIT MODULE", border=1, fill=True, align="L")
                 pdf.cell(123, 8, " SUBTOPICS & CURRICULUM CONTENTS", border=1, fill=True, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        # --- DYNAMIC TEXTBOOK VISUAL CONTAINER REGION ---
+        if clean_line.startswith("[Image of") and clean_line.endswith("]"):
+            pdf.ln(3)
+            img_description = clean_line.replace("[Image of", "").replace("]", "").strip()
+            
+            start_img_y = pdf.get_y()
+            pdf.set_fill_color(248, 250, 252) # Cool grid white background layer
+            pdf.set_draw_color(148, 163, 184) # Modern grey bounds
+            pdf.set_line_width(0.35)
+            
+            # Construct dashed/solid decorative box
+            pdf.rect(16, start_img_y, 178, 34, style="FD")
+            
+            # Label banner cell
+            pdf.set_xy(18, start_img_y + 4)
+            pdf.set_font(pdf._active_font, "B", 9.5)
+            pdf.set_text_color(30, 41, 59)
+            pdf.cell(174, 5, "📊 TEXTBOOK GEOMETRIC GRAPH & DIAGRAM COGNITIVE ANCHOR", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            
+            # Instructional content details
+            pdf.set_xy(22, start_img_y + 11)
+            pdf.set_font(pdf._active_font, "I", 8.5)
+            pdf.set_text_color(71, 85, 105)
+            pdf.multi_cell(166, 4.5, f"Illustration Objective: {img_description}", border=0, align="C")
+            
+            pdf.set_y(start_img_y + 39)
+            continue
 
         if "### EXAM_ANSWER_KEY_SECTION" in stripped_line or "ANSWER KEY APPENDIX" in stripped_line:
             in_answer_key = True
@@ -197,7 +232,7 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
         if skipping_lines:
             continue
 
-        # --- SYLLABUS INTERACTIVE ROW WRAPPING GRID ENGINE ---
+        # --- VARIETY PRESENTATION COMPLIANCE MAPS ---
         if variety == "official_syllabus":
             pdf.set_font(pdf._active_font, "", 9.5)
             pdf.set_text_color(51, 65, 85)
@@ -207,12 +242,10 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
                 left_col = left_col.strip()
                 right_col = right_col.strip()
             else:
-                left_col = "Topic Content"
+                left_col = "Topic Module"
                 right_col = clean_line
                 
             start_y = pdf.get_y()
-            
-            # Calculate height using multi_cell simulations to secure borders
             pdf.set_xy(16, start_y)
             pdf.set_font(pdf._active_font, "B", 9.5)
             pdf.set_text_color(30, 41, 59)
@@ -226,15 +259,12 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
             end_y_2 = pdf.get_y()
             
             max_row_height = max(end_y_1, end_y_2) - start_y + 2
-            
-            # Draw beautiful bounding grid boxes
             pdf.rect(16, start_y, 55, max_row_height)
             pdf.rect(71, start_y, 123, max_row_height)
             pdf.set_y(start_y + max_row_height)
 
-        # --- NOTES AND QUESTION PAPERS GRID LAYOUT ---
         else:
-            if any(clean_line.upper().startswith(p) for p in ["SECTION", "UNIT", "CHAPTER"]) or ( "Notes" in clean_line and clean_line.endswith("Notes") ):
+            if any(clean_line.upper().startswith(p) for p in ["SECTION", "UNIT", "CHAPTER"]) or ("Notes" in clean_line and clean_line.endswith("Notes")):
                 pdf.ln(4)
                 pdf.set_fill_color(241, 245, 249)
                 pdf.set_draw_color(203, 213, 225)
@@ -286,7 +316,7 @@ def compile_chat_history_to_pdf(chat_history, user_query, llm_config, output_dir
     if "SECTION A" in main_text:
         ctx_mock = {
             "board": "CBSE", "class_level": "9", "subject": "Science", "language": "English",
-            "time_allowed": "3 Hours", "max_marks": 80, "output_variety": "paperset"
+            "time_allowed": "3 Hours", "max_marks": 100, "output_variety": "paperset"
         }
         return compile_exam_paper_to_pdf(main_text, ctx_mock, output_filename, output_dir, include_answer_key=False)
 
