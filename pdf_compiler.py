@@ -3,254 +3,304 @@ import re
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
-# ──────────────────────────────────────────────────────────────────────────────
-# DETECT AND REGISTER MULTILINGUAL UNICODE FONTS
-# ──────────────────────────────────────────────────────────────────────────────
-
 FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
-DEFAULT_LATIN_FONT = os.path.join(FONTS_DIR, "NotoSans-Regular.ttf")
-DEVANAGARI_FONT = os.path.join(FONTS_DIR, "NotoSerifDevanagari-Regular.ttf")
-DEVANAGARI_RANGE = (0x0900, 0x097F)
+DEVANAGARI_FONT_REGULAR = os.path.join(FONTS_DIR, "NotoSans-Regular.ttf") 
+DEVANAGARI_FONT_BOLD = os.path.join(FONTS_DIR, "NotoSans-Bold.ttf")
 
-def contains_devanagari(text: str) -> bool:
-    if not text:
-        return False
-    return any(DEVANAGARI_RANGE[0] <= ord(ch) <= DEVANAGARI_RANGE[1] for ch in text)
-
-def safe_text_encode(text: str, is_unicode_ready: bool = True) -> str:
-    if not text:
-        return ""
+def safe_text_encode(text: str) -> str:
+    if not text: return ""
     replacements = {
-        "“": '"', "”": '"', "‘": "'", "’": "'",
-        "–": "-", "—": "-", "•": "-",
-        "✅": "", "❌": "", "📘": "", "🎓": "", "🔍": "",
-        "→": "->", "₹": "Rs.", "**": "", "###": "", "##": "", "#": ""
+        "“": '"', "”": '"', "‘": "'", "’": "'", "–": "-", "—": "-", "•": "-",
+        "###": "", "##": "", "#": "", "**": "", "*": "", '"': ""
     }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    if not is_unicode_ready:
-        return text.encode("latin-1", "replace").decode("latin-1")
+    for old, new in replacements.items(): text = text.replace(old, new)
     return text
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 1. ROUTE 1 COMPILER: STRUCTURED TABULAR SYLLABUS SCHEMAS
-# ──────────────────────────────────────────────────────────────────────────────
-
-class AdvancedSyllabusPDF(FPDF):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.board_name = "CBSE"
-        self.class_lvl = "10"
-        self.stream_name = "General Education"
-        self._unicode_ready = False
-        self._active_font = "Helvetica"
-
-    def register_custom_fonts(self, text_sample: str):
-        if os.path.exists(DEVANAGARI_FONT) and contains_devanagari(text_sample):
-            self.add_font("NotoSerifDevanagari", "", DEVANAGARI_FONT, uni=True)
-            self._active_font = "NotoSerifDevanagari"
-            self._unicode_ready = True
-        elif os.path.exists(DEFAULT_LATIN_FONT):
-            self.add_font("NotoSans", "", DEFAULT_LATIN_FONT, uni=True)
-            self._active_font = "NotoSans"
-            self._unicode_ready = True
-
-    def header(self):
-        self.set_fill_color(30, 41, 59) # Slate Dark Blue
-        self.rect(0, 0, 210, 25, style="F")
-        if self.page > 0:
-            self.set_y(8)
-            self.set_font(self._active_font, "B" if not self._unicode_ready else "", 14)
-            self.set_text_color(255, 255, 255)
-            self.cell(0, 8, "OFFICIAL ACADEMIC REGISTRATION CURRICULUM", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    def footer(self):
-        if self.page > 0:
-            self.set_y(-15)
-            self.set_font(self._active_font, "I" if not self._unicode_ready else "", 8)
-            self.set_text_color(148, 163, 184)
-            self.cell(0, 5, "Generated dynamically via verified Board Matrix Records.", align="L")
-            self.set_y(-15)
-            self.cell(0, 5, f"Page {self.page_no()} of {{nb}}", align="R")
-
-
-def compile_curriculum_object_to_pdf(data, filename: str, output_dir: str = "outputs") -> str:
-    os.makedirs(output_dir, exist_ok=True)
-    pdf_path = os.path.join(output_dir, filename)
-    
-    pdf = AdvancedSyllabusPDF(orientation="P", unit="mm", format="A4")
-    pdf.board_name = data.board
-    pdf.class_lvl = data.class_level
-    pdf.stream_name = data.stream
-    
-    # Analyze string contexts to register the correct multilingual fonts
-    sample_check = f"{data.board} {data.stream}"
-    pdf.register_custom_fonts(sample_check)
-    
-    pdf.alias_nb_pages()
-    pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.set_margins(15, 25, 15)
-    
-    pdf.add_page()
-    pdf.set_font(pdf._active_font, "", 10)
-    
-    pdf.set_fill_color(241, 245, 249)
-    pdf.rect(15, 30, 180, 22, style="F")
-    pdf.set_y(33)
-    pdf.set_font(pdf._active_font, "B" if not pdf._unicode_ready else "", 11)
-    pdf.set_text_color(15, 23, 42)
-    pdf.cell(0, 5, f"BOARD RESIDENT CONTROL: {pdf.board_name.upper()}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_font(pdf._active_font, "", 10)
-    pdf.cell(0, 5, f"Target Matrix Framework: {pdf.class_lvl} | Stream Segment: {pdf.stream_name}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(8)
-    
-    for subject in data.subjects:
-        if pdf.get_y() > 230:
-            pdf.add_page()
-            
-        pdf.set_font(pdf._active_font, "B" if not pdf._unicode_ready else "", 13)
-        pdf.set_text_color(29, 78, 216) 
-        pdf.cell(0, 8, f"Subject: {subject.subject_name}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.ln(2)
-        
-        # Grid Table Formats
-        pdf.set_fill_color(226, 232, 240)
-        pdf.set_font(pdf._active_font, "B" if not pdf._unicode_ready else "", 9)
-        pdf.set_text_color(15, 23, 42)
-        pdf.cell(20, 7, "Chapter", border=1, fill=True, align="C")
-        pdf.cell(60, 7, "Core Chapter Title", border=1, fill=True, align="L")
-        pdf.cell(100, 7, "Conceptual Core Sub-Topics Covered", border=1, fill=True, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        
-        pdf.set_font(pdf._active_font, "", 9)
-        pdf.set_text_color(51, 65, 85)
-        
-        for ch in subject.chapters:
-            topics_sentence = ", ".join(ch.core_topics)
-            if pdf.get_y() > 255:
-                pdf.add_page()
-                pdf.set_fill_color(226, 232, 240)
-                pdf.set_font(pdf._active_font, "B" if not pdf._unicode_ready else "", 9)
-                pdf.cell(20, 7, "Chapter", border=1, fill=True, align="C")
-                pdf.cell(60, 7, "Core Chapter Title", border=1, fill=True, align="L")
-                pdf.cell(100, 7, "Conceptual Core Sub-Topics Covered", border=1, fill=True, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                pdf.set_font(pdf._active_font, "", 9)
-            
-            pdf.cell(20, 8, str(ch.chapter_number), border=1, align="C")
-            pdf.cell(60, 8, safe_text_encode(ch.title[:32], pdf._unicode_ready), border=1, align="L")
-            pdf.cell(100, 8, safe_text_encode(topics_sentence[:60], pdf._unicode_ready) + "...", border=1, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.ln(4)
-        
-    pdf.output(pdf_path)
-    return pdf_path
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 2. ROUTE 2 COMPILER: PAPERS, BLUEPRINTS, NOTES (INSULATED FROM WRITE_HTML CRASHES)
-# ──────────────────────────────────────────────────────────────────────────────
 
 class UnstructuredEducationalPDF(FPDF):
     def __init__(self, report_title="AI Academic Document", citation_hint="", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.report_title = report_title
         self.citation_hint = citation_hint
-        self._unicode_ready = False
         self._active_font = "Helvetica"
 
-    def register_custom_fonts(self, text_sample: str):
-        if os.path.exists(DEVANAGARI_FONT) and contains_devanagari(text_sample):
-            self.add_font("NotoSerifDevanagari", "", DEVANAGARI_FONT, uni=True)
-            self._active_font = "NotoSerifDevanagari"
-            self._unicode_ready = True
-        elif os.path.exists(DEFAULT_LATIN_FONT):
-            self.add_font("NotoSans", "", DEFAULT_LATIN_FONT, uni=True)
-            self._active_font = "NotoSans"
-            self._unicode_ready = True
+    def register_custom_fonts(self):
+        if os.path.exists(DEVANAGARI_FONT_REGULAR):
+            self.add_font("NotoDevanagari", "", DEVANAGARI_FONT_REGULAR)
+            if os.path.exists(DEVANAGARI_FONT_BOLD):
+                self.add_font("NotoDevanagari", "B", DEVANAGARI_FONT_BOLD)
+            self._active_font = "NotoDevanagari"
+            try: self.set_text_shaping(True)
+            except Exception: pass
+        else:
+            self._active_font = "Helvetica"
 
     def header(self):
-        self.set_fill_color(30, 41, 59) # Slate Dark Blue Header
-        self.rect(0, 0, 210, 25, style="F")
+        self.set_fill_color(30, 41, 59) 
+        self.rect(0, 0, 210, 24, style="F")
         if self.page > 0:
             self.set_y(8)
-            self.set_font(self._active_font, "B" if not self._unicode_ready else "", 13)
+            self.set_font(self._active_font, "B", 11)
             self.set_text_color(255, 255, 255)
-            self.cell(0, 8, safe_text_encode(self.report_title.upper(), self._unicode_ready), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.cell(0, 6, safe_text_encode(self.report_title.upper()), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     def footer(self):
         if self.page > 0:
             self.set_y(-15)
-            self.set_font(self._active_font, "I" if not self._unicode_ready else "", 7.5)
+            self.set_font(self._active_font, "", 8)
             self.set_text_color(148, 163, 184)
             if self.citation_hint:
-                self.cell(0, 5, safe_text_encode(self.citation_hint, self._unicode_ready), align="L")
+                self.cell(0, 5, safe_text_encode(self.citation_hint), align="L")
             self.set_y(-15)
             self.cell(0, 5, f"Page {self.page_no()} of {{nb}}", align="R")
 
-
-def compile_chat_history_to_pdf(chat_history, user_query, llm_config, output_dir="outputs", output_filename="educational_output.pdf", report_title="AI Custom Learning Document", citation_hint=""):
+def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_dir: str = "outputs", include_answer_key: bool = False) -> str:
     os.makedirs(output_dir, exist_ok=True)
-    pdf_path = os.path.join(output_dir, output_filename)
+    pdf_path = os.path.join(output_dir, filename)
     
-    useful_contents = [m.get("content", "").strip() for m in chat_history if m.get("content") and m.get("role") != "user"]
-    main_text = useful_contents[-1] if useful_contents else "No response generated."
-
-    pdf = UnstructuredEducationalPDF(report_title=report_title, citation_hint=citation_hint, orientation="P", unit="mm", format="A4")
+    variety = ctx.get("output_variety", "study_notes")
+    variety_label = variety.replace('_', ' ').upper()
     
-    # Primary font check triggers unicode fonts BEFORE adding the initial page canvas boundary
-    combined_sample = user_query + " " + main_text[:500]
-    pdf.register_custom_fonts(combined_sample)
-    
+    pdf = UnstructuredEducationalPDF(
+        report_title=f"{ctx.get('board', 'BOARD')} {variety_label}: STANDARD {ctx.get('class_level', 'IX')}", 
+        citation_hint=f"Ref: {ctx.get('board', 'Board')} Curriculum Blueprint"
+    )
+    pdf.register_custom_fonts()
     pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.set_margins(15, 25, 15)
-    
-    # Open the core document canvas safely
+    pdf.set_margins(16, 28, 16)
     pdf.add_page()
     
-    # Render Student Input Query Reference Card Block
-    pdf.set_fill_color(248, 250, 252)
-    pdf.rect(15, 30, 180, 16, style="F")
-    pdf.set_y(32)
-    pdf.set_font(pdf._active_font, "B" if not pdf._unicode_ready else "", 9)
-    pdf.set_text_color(71, 85, 105)
-    pdf.cell(0, 4, "STUDENT INPUT QUERY REFERENCE:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_font(pdf._active_font, "I" if not pdf._unicode_ready else "", 9.5)
-    pdf.set_text_color(15, 23, 42)
-    
-    clean_query = safe_text_encode(user_query, pdf._unicode_ready)
-    pdf.cell(0, 5, f'"{clean_query[:85]}..."' if len(clean_query) > 85 else f'"{clean_query}"', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(8)
-    
     # ──────────────────────────────────────────────────────────────────────────
-    # INSULATED DEFENSIVE MULTILINGUAL TEXT RENDERER LOOP
+    # HEADER LOGIC MATRICES
     # ──────────────────────────────────────────────────────────────────────────
-    pdf.set_text_color(51, 65, 85)
+    if variety == "paperset":
+        pdf.set_y(28)
+        pdf.set_font(pdf._active_font, "B", 13)
+        pdf.set_text_color(30, 41, 59)
+        pdf.cell(0, 6, safe_text_encode(ctx.get('board', 'BOARD EXAM').upper()), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
+        pdf.set_font(pdf._active_font, "B", 11)
+        pdf.set_text_color(71, 85, 105)
+        pdf.cell(0, 5, f"EVALUATION EXAM: CLASS {ctx.get('class_level', '9')}", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
+        subj_label = ctx.get('subject', 'General').upper()
+        stream_txt = f" | Stream: {ctx.get('stream')}" if ctx.get('stream') else ""
+        pdf.cell(0, 5, f"SUBJECT: {subj_label} ({ctx.get('language', 'English')} Medium{stream_txt})", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(3)
+        
+        pdf.set_draw_color(30, 41, 59)
+        pdf.set_line_width(0.5)
+        pdf.line(16, pdf.get_y(), 194, pdf.get_y())
+        pdf.ln(2)
+        
+        pdf.set_font(pdf._active_font, "B", 10)
+        curr_y = pdf.get_y()
+        pdf.cell(90, 5, f"TIME ALLOWED: {ctx.get('time_allowed', '3 Hours')}", align="L")
+        pdf.set_xy(106, curr_y)
+        pdf.cell(88, 5, f"MAXIMUM MARKS: {ctx.get('max_marks', 80)} MARKS", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(2)
+        pdf.line(16, pdf.get_y(), 194, pdf.get_y())
+        pdf.ln(5)
+
+    elif variety == "official_syllabus":
+        pdf.set_y(28)
+        pdf.set_font(pdf._active_font, "B", 14)
+        pdf.set_text_color(30, 41, 59)
+        pdf.cell(0, 6, f"{ctx.get('board', 'BOARD')} OFFICIAL SYLLABUS MATRIX", align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
+        pdf.set_font(pdf._active_font, "B", 10)
+        pdf.set_text_color(100, 116, 139)
+        pdf.cell(0, 5, f"Grade Level: Standard {ctx.get('class_level')} | Course: {ctx.get('subject')}", align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(3)
+        pdf.set_draw_color(30, 41, 59)
+        pdf.set_line_width(0.5)
+        pdf.line(16, pdf.get_y(), 194, pdf.get_y())
+        pdf.ln(4)
+        
+        # High-End Table Header Layout
+        pdf.set_fill_color(30, 41, 59)
+        pdf.set_font(pdf._active_font, "B", 10)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(55, 8, " CHAPTER / UNIT MODULE", border=1, fill=True, align="L")
+        pdf.cell(123, 8, " SUBTOPICS & CURRICULUM CONTENTS", border=1, fill=True, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    else:
+        pdf.set_y(28)
+        pdf.set_font(pdf._active_font, "B", 15)
+        pdf.set_text_color(30, 41, 59)
+        pdf.cell(0, 6, f"OFFICIAL ACADEMIC STUDY NOTES", align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
+        pdf.set_font(pdf._active_font, "", 10)
+        pdf.set_text_color(71, 85, 105)
+        pdf.cell(0, 5, f"Subject: {ctx.get('subject')} | Framework: {ctx.get('board')} (Class {ctx.get('class_level')})", align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(3)
+        pdf.set_draw_color(30, 41, 59)
+        pdf.set_line_width(0.6)
+        pdf.line(16, pdf.get_y(), 194, pdf.get_y())
+        pdf.ln(5)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # LINE EXTRACTION RENDERING LOOP
+    # ──────────────────────────────────────────────────────────────────────────
+    in_answer_key = False
+    skipping_lines = False
     
     for line in main_text.split("\n"):
         stripped_line = line.strip()
-        if not stripped_line:
-            pdf.ln(2)
+        if not stripped_line or "EVALUATION EXAMINATION" in stripped_line or "OFFICIAL BOARD" in stripped_line:
             continue
             
-        clean_line = safe_text_encode(stripped_line, pdf._unicode_ready)
+        clean_line = safe_text_encode(stripped_line)
         
-        # Dynamic Section Header Font Controller
-        if stripped_line.startswith("# ") or stripped_line.startswith("## ") or stripped_line.startswith("### "):
-            pdf.ln(2)
-            pdf.set_font(pdf._active_font, "B" if not pdf._unicode_ready else "", 12)
-            pdf.set_text_color(29, 78, 216) # Section Header Blue
-            pdf.multi_cell(0, 6, clean_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        if pdf.get_y() > 250:
+            pdf.add_page()
+            if variety == "official_syllabus":
+                # Reprint headers on new page boundaries for table stability
+                pdf.set_fill_color(30, 41, 59)
+                pdf.set_font(pdf._active_font, "B", 10)
+                pdf.set_text_color(255, 255, 255)
+                pdf.cell(55, 8, " CHAPTER / UNIT MODULE", border=1, fill=True, align="L")
+                pdf.cell(123, 8, " SUBTOPICS & CURRICULUM CONTENTS", border=1, fill=True, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        if "### EXAM_ANSWER_KEY_SECTION" in stripped_line or "ANSWER KEY APPENDIX" in stripped_line:
+            in_answer_key = True
+            if not include_answer_key:
+                skipping_lines = True
+                continue
+            pdf.add_page()
+            pdf.set_y(28)
+            pdf.set_font(pdf._active_font, "B", 12)
+            pdf.set_text_color(220, 38, 38)
+            pdf.cell(0, 6, "OFFICIAL EVALUATION GUIDE & ANSWER KEY APPENDIX", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_draw_color(220, 38, 38)
+            pdf.line(16, pdf.get_y(), 194, pdf.get_y())
+            pdf.ln(4)
+            continue
+
+        if "EXT_LINK_PORTAL_TRIGGER" in stripped_line:
+            skipping_lines = False
+            pdf.ln(6)
+            pdf.set_font(pdf._active_font, "B", 10)
+            pdf.set_text_color(29, 78, 216)
+            pdf.cell(0, 5, "VERIFIED CURRICULUM LINKS & PORTALS:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(1)
-        elif re.match(r"^SECTION|^PART|प्रश्न पत्र", clean_line, re.IGNORECASE):
-            pdf.ln(3)
-            pdf.set_font(pdf._active_font, "B" if not pdf._unicode_ready else "", 13)
-            pdf.set_text_color(15, 23, 42)
-            pdf.multi_cell(0, 7, clean_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(2)
-        else:
-            # Standard Text Row Multi-Cell Render
-            pdf.set_font(pdf._active_font, "", 10.5)
+            continue
+
+        if "Official Board Reference" in clean_line or "Official Textbook" in clean_line:
+            font_style = "" if pdf._active_font == "NotoDevanagari" else "I"
+            pdf.set_font(pdf._active_font, font_style, 9.5)
+            pdf.set_text_color(37, 99, 235)
+            display_link = re.sub(r'^[-\s*•]+', '  ', clean_line)
+            pdf.multi_cell(0, 5, display_link, border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            continue
+
+        if skipping_lines:
+            continue
+
+        # --- SYLLABUS INTERACTIVE ROW WRAPPING GRID ENGINE ---
+        if variety == "official_syllabus":
+            pdf.set_font(pdf._active_font, "", 9.5)
             pdf.set_text_color(51, 65, 85)
-            pdf.multi_cell(0, 5.5, clean_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
+            if ":" in clean_line:
+                left_col, right_col = clean_line.split(":", 1)
+                left_col = left_col.strip()
+                right_col = right_col.strip()
+            else:
+                left_col = "Topic Content"
+                right_col = clean_line
+                
+            start_y = pdf.get_y()
+            
+            # Calculate height using multi_cell simulations to secure borders
+            pdf.set_xy(16, start_y)
+            pdf.set_font(pdf._active_font, "B", 9.5)
+            pdf.set_text_color(30, 41, 59)
+            pdf.multi_cell(55, 6, left_col, border=0, align="L")
+            end_y_1 = pdf.get_y()
+            
+            pdf.set_xy(71, start_y)
+            pdf.set_font(pdf._active_font, "", 9.5)
+            pdf.set_text_color(51, 65, 85)
+            pdf.multi_cell(123, 6, right_col, border=0, align="L")
+            end_y_2 = pdf.get_y()
+            
+            max_row_height = max(end_y_1, end_y_2) - start_y + 2
+            
+            # Draw beautiful bounding grid boxes
+            pdf.rect(16, start_y, 55, max_row_height)
+            pdf.rect(71, start_y, 123, max_row_height)
+            pdf.set_y(start_y + max_row_height)
+
+        # --- NOTES AND QUESTION PAPERS GRID LAYOUT ---
+        else:
+            if any(clean_line.upper().startswith(p) for p in ["SECTION", "UNIT", "CHAPTER"]) or ( "Notes" in clean_line and clean_line.endswith("Notes") ):
+                pdf.ln(4)
+                pdf.set_fill_color(241, 245, 249)
+                pdf.set_draw_color(203, 213, 225)
+                sect_y = pdf.get_y()
+                pdf.rect(16, sect_y, 178, 8, style="FD")
+                
+                pdf.set_fill_color(30, 41, 59) if not in_answer_key else pdf.set_fill_color(220, 38, 38)
+                pdf.rect(16, sect_y, 2.5, 8, style="F")
+                
+                pdf.set_xy(21, sect_y + 1.5)
+                pdf.set_font(pdf._active_font, "B", 10)
+                pdf.set_text_color(30, 41, 59) if not in_answer_key else pdf.set_text_color(185, 28, 28)
+                pdf.cell(0, 5, clean_line.upper(), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_y(sect_y + 11)
+                
+            elif re.match(r'^\d+\.', clean_line):
+                pdf.ln(1.5)
+                pdf.set_font(pdf._active_font, "B", 10)
+                pdf.set_text_color(30, 41, 59) if not in_answer_key else pdf.set_text_color(185, 28, 28)
+                
+                if "(" in clean_line and any(m in clean_line.lower() for m in ["mark", "marks"]):
+                    try:
+                        base_text = clean_line.rsplit("(", 1)[0].strip()
+                        marks_text = "(" + clean_line.rsplit("(", 1)[1].strip()
+                        
+                        pdf.multi_cell(145, 5, base_text, border=0, align="L", new_x=XPos.WBR, new_y=YPos.TOP)
+                        pdf.cell(33, 5, marks_text, border=0, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    except Exception:
+                        pdf.multi_cell(0, 5, clean_line, border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                else:
+                    pdf.multi_cell(0, 5, clean_line, border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    
+            elif re.match(r'^[a-d\)]', clean_line) or clean_line.startswith("[a)") or clean_line.startswith("- a)"):
+                pdf.set_font(pdf._active_font, "", 9.5)
+                pdf.set_text_color(71, 85, 105)
+                pdf.multi_cell(0, 5, "            " + clean_line, border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            else:
+                pdf.set_font(pdf._active_font, "", 10)
+                pdf.set_text_color(51, 65, 85)
+                pdf.multi_cell(0, 5.5, clean_line, border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
     pdf.output(pdf_path)
     return pdf_path
+
+def compile_chat_history_to_pdf(chat_history, user_query, llm_config, output_dir="outputs", output_filename="educational_output.pdf", report_title="AI Custom Document", citation_hint=""):
+    useful_contents = [m.get("content", "").strip() for m in chat_history if m.get("content")]
+    main_text = useful_contents[-1] if useful_contents else ""
+    
+    if "SECTION A" in main_text:
+        ctx_mock = {
+            "board": "CBSE", "class_level": "9", "subject": "Science", "language": "English",
+            "time_allowed": "3 Hours", "max_marks": 80, "output_variety": "paperset"
+        }
+        return compile_exam_paper_to_pdf(main_text, ctx_mock, output_filename, output_dir, include_answer_key=False)
+
+    pdf = UnstructuredEducationalPDF(report_title=report_title, citation_hint=citation_hint)
+    pdf.register_custom_fonts()
+    pdf.alias_nb_pages()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_margins(18, 28, 18)
+    pdf.add_page()
+    
+    pdf.set_y(28)
+    pdf.set_font(pdf._active_font, "", 10)
+    pdf.set_text_color(51, 65, 85)
+    for line in main_text.split("\n"):
+        pdf.multi_cell(0, 5.5, safe_text_encode(line.strip()), border=0)
+    pdf.output(os.path.join(output_dir, output_filename))
+    return os.path.join(output_dir, output_filename)
