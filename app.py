@@ -2,7 +2,8 @@ import os
 import streamlit as st
 import base64
 from datetime import datetime
-from teacher import analyze_request, run_pure_autogen_pipeline
+# UPDATE THIS LINE: Import the agentic analyzer instead of the old procedural one
+from teacher import agentic_analyze_request, run_pure_autogen_pipeline
 from pdf_compiler import compile_exam_paper_to_pdf
 
 # Set up browser window configurations
@@ -53,14 +54,14 @@ language_medium = "English"
 academic_stream = "General Track"
 
 if user_query_input:
-    # Run the query analysis pipeline transparently behind the scenes
-    inferred_ctx = analyze_request(user_query_input)
+    # UPDATE THIS LINE: Call the agentic analysis function
+    inferred_ctx = agentic_analyze_request(user_query_input)
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("🎯 Detected Context Parameters")
     st.sidebar.info(f"**Format Variety:** {inferred_ctx['output_variety'].replace('_', ' ').title()}\n\n"
                     f"**Grade Level:** Standard {inferred_ctx['class_level']}\n\n"
-                    f"**Assigned Board:** {inferred_ctx['board']}")
+                    f"**Board:** {inferred_ctx['board']}")
 
     # Check if grade level falls into higher secondary categories (11th or 12th)
     if inferred_ctx["is_higher_secondary"]:
@@ -72,6 +73,8 @@ if user_query_input:
         if "Commerce" in stream_select: academic_stream = "Commerce"
         elif "Arts" in stream_select: academic_stream = "Arts"
         else: academic_stream = "Science"
+        
+        inferred_ctx["stream"] = academic_stream
     else:
         # Otherwise, default to standard secondary medium selection layout paths
         st.sidebar.success("🏫 Secondary Grade Detected: Medium Selection Required")
@@ -85,9 +88,7 @@ if user_query_input:
         else:
             language_medium = "English"
             
-    # Re-package context selections safely for transmission down the core pipeline
-    inferred_ctx["language"] = language_medium
-    inferred_ctx["stream"] = academic_stream
+        inferred_ctx["language"] = language_medium
 else:
     inferred_ctx = None
 
@@ -96,10 +97,10 @@ if st.sidebar.button("Launch Agent Orchestration"):
     if not user_query_input.strip():
         st.error("Please enter a valid request prompt in the input tray first.")
     else:
-        if inferred_ctx["output_variety"] == "non_educational_reject":
+        if inferred_ctx and inferred_ctx.get("output_variety") == "non_educational_reject":
             st.error("🛑 Request Rejected: Out of Scope. Please enter a valid educational curriculum query.")
         else:
-            with st.spinner("🚀 Spawning workspace group chat. Dynamic Orchestrator is reviewing metadata..."):
+            with st.spinner("🚀 Spawning workspace group chat. Query Analyzer Agent is decoding intents..."):
                 try:
                     # Pipeline transmission hand-off straight to the AutoGen core loop
                     raw_result_text = run_pure_autogen_pipeline(user_query_input, inferred_ctx)
@@ -160,5 +161,4 @@ if st.session_state.final_output_text:
         else:
             st.info("⚡ PDF Compilation step was skipped or disabled for this run frame.")
 else:
-    # Default Welcome Dashboard Metrics
     st.info("👋 Welcome to the Multi-Agent Interactive Terminal. Complete the left configuration profile and launch generation to see output grids.")

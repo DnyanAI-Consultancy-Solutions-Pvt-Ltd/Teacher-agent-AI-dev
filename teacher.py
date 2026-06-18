@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import warnings
 from dotenv import load_dotenv
 import autogen
@@ -29,93 +30,75 @@ llm_config = {
 
 OUTPUT_DIR = "outputs"
 
-def contains_devanagari(text: str) -> bool:
-    return any(0x0900 <= ord(ch) <= 0x097F for ch in text) if text else False
-
-def normalize_language_hint(text: str) -> str:
-    if not text: return "English"
-    t = text.lower()
-    if any(k in t for k in ["marathi", "मराठी"]): return "Marathi"
-    if any(k in t for k in ["hindi", "हिंदी"]): return "Hindi"
-    return "Hindi" if contains_devanagari(text) else "English"
-
-def analyze_request(user_question: str) -> dict:
-    q = user_question.lower().strip()
+# ──────────────────────────────────────────────────────────────────────────────
+# PURE AGENTIC ROUTING LAYER (NO IF-ELSE BLOCK CHAINS)
+# ──────────────────────────────────────────────────────────────────────────────
+def agentic_analyze_request(user_question: str) -> dict:
+    """Uses a specialized analyzer agent to parse context using natural language instructions."""
+    print(f"[Agentic Analysis] Parsing user query properties...")
     
-    non_edu_signals = [
-        "recipe", "how to cook", "movie gossip", "bollywood", "hollywood", 
-        "song lyrics", "cricket score", "ipl score", "gaming cheat", "video game stream"
-    ]
-    if any(junk in q for junk in non_edu_signals):
-        return {"output_variety": "non_educational_reject", "generate_pdf": False}
-
-    with_answers = False
-    if any(ans in q for ans in ["with answers", "answer key", "solutions", "उत्तरांसह", "उत्तरपत्रिका"]):
-        with_answers = True
-
-    if any(k in q for k in ["syllabus", "curriculum", "chapters", "index", "अभ्यासक्रम"]):
-        variety = "official_syllabus"
-    elif any(k in q for k in ["paper", "test", "exam", "question paper", "प्रश्नपत्रिका", "mock"]):
-        variety = "paperset"
-    elif any(k in q for k in ["gk", "general knowledge", "who is", "fact", "history of", "gk questions", "capital of"]):
-        variety = "general_knowledge"
-    elif any(k in q for k in ["notes", "explain", "study material", "tutorial", "chapter summary"]):
-        variety = "study_notes"
-    else:
-        variety = "educational_query"
-
-    lang = normalize_language_hint(user_question)
+    analyzer_proxy = UserProxyAgent(
+        name="Analyzer_Proxy",
+        human_input_mode="NEVER",
+        max_consecutive_auto_reply=0,
+        code_execution_config=False
+    )
     
-    class_level = None
-    class_match = re.search(r'(\d+)', q)
-    if class_match:
-        class_level = class_match.group(1)
-    else:
-        if "eleven" in q or "11th" in q or "hsc" in q: class_level = "11"
-        elif "twelve" in q or "12th" in q: class_level = "12"
-        elif "ten" in q or "10th" in q or "ssc" in q: class_level = "10"
-        elif "ninth" in q or "9th" in q: class_level = "9"
-
-    is_higher_secondary = False
-    if class_level and class_level.isdigit():
-        if int(class_level) in [11, 12]:
-            is_higher_secondary = True
-
-    board = "Maharashtra State Board" if lang == "Marathi" or "maharashtra" in q else "CBSE"
-
-    subject = None
-    subject_map = {
-        "physics": "Physics", "chemistry": "Chemistry", "biology": "Biology", 
-        "science": "Science", "math": "Mathematics", "history": "History",
-        "geography": "Geography", "social science": "Social Science", "marathi": "Marathi",
-        "civics": "Political Science", "economics": "Economics", "accounts": "Accountancy"
-    }
-    
-    found_subjects = []
-    for key, sub_val in subject_map.items():
-        if key in q:
-            found_subjects.append(sub_val)
-            
-    if found_subjects:
-        subject = ", ".join(list(set(found_subjects)))
-        is_generic_paper = False
-    else:
-        subject = "All Core Disciplines" if variety == "paperset" else "General Academic Inquiries"
-        is_generic_paper = True if variety == "paperset" else False
+    analyzer_agent = AssistantAgent(
+        name="Query_Analyzer",
+        llm_config=llm_config,
+        system_message="""You are an expert Educational Metadata Parser. Analyze the incoming user query and return a valid JSON object matching the schema below.
         
-    return {
-        "output_variety": variety,
-        "class_level": class_level if class_level else "9",
-        "is_higher_secondary": is_higher_secondary,
-        "board": board,
-        "language": lang,
-        "subject": subject,
-        "is_generic_paper": is_generic_paper,
-        "with_answers": with_answers,
-        "time_allowed": "3 Hours",
-        "max_marks": 100 if variety == "paperset" else 80
-    }
+        CRITICAL RULES:
+        1. If the query is completely non-educational (e.g., cooking recipes, movie gossip, pop music), set "output_variety" to "non_educational_reject".
+        2. Categorize the request format ("output_variety") as one of: "paperset", "official_syllabus", "study_notes", "general_knowledge", or "educational_query".
+        3. Identify the target class/standard as a string integer (e.g., "9", "11"). Default to "9" if missing.
+        4. Set "is_higher_secondary" to true if the grade is 11 or 12, otherwise false.
+        5. Identify the subject(s) mentioned. If it is a broad exam paper request with no subject specified, label it "All Core Disciplines" and set "is_generic_paper" to true.
+        6. Sniff out if the user wants an answer key/solutions included. Set "with_answers" to true or false.
+        7. Determine the board ("CBSE" or "Maharashtra State Board") based on text cues or medium.
+        8. Set "max_marks" to 100 for paper sets, and 80 for other outputs.
+        
+        OUTPUT FORMAT: Return ONLY a raw JSON code block matching this schema. Do not write markdown or conversational introductions:
+        {
+            "output_variety": "string",
+            "class_level": "string",
+            "is_higher_secondary": boolean,
+            "board": "string",
+            "language": "string",
+            "subject": "string",
+            "is_generic_paper": boolean,
+            "with_answers": boolean,
+            "time_allowed": "3 Hours",
+            "max_marks": integer
+        }"""
+    )
+    
+    # Run a quick 1-turn analysis chat to get structured profile data
+    chat_result = analyzer_proxy.initiate_chat(
+        recipient=analyzer_agent,
+        message=f"Analyze this user query: '{user_question}'",
+        clear_history=True
+    )
+    
+    raw_json_response = chat_result.chat_history[-1]['content']
+    
+    # Strip markdown code blocks if the LLM wrapped it
+    clean_json = re.sub(r"```json|```", "", raw_json_response).strip()
+    
+    try:
+        return json.loads(clean_json)
+    except Exception:
+        # Secure baseline fallback object if JSON parsing encounters string irregularities
+        return {
+            "output_variety": "educational_query", "class_level": "9", "is_higher_secondary": False,
+            "board": "CBSE", "language": "English", "subject": "General Studies",
+            "is_generic_paper": False, "with_answers": False, "time_allowed": "3 Hours", "max_marks": 80
+        }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# MAIN AUTOGEN SYSTEM ORCHESTRATION PIPELINE
+# ──────────────────────────────────────────────────────────────────────────────
 def run_pure_autogen_pipeline(user_query: str, ctx: dict):
     print(f"\n[AutoGen Setup] Spawning academic group conversation room...")
 
@@ -167,7 +150,6 @@ def run_pure_autogen_pipeline(user_query: str, ctx: dict):
         - Do NOT include mock question sets or scoring guidelines.
         """
     elif ctx["output_variety"] == "study_notes":
-        # TOKEN-OPTIMIZED CONTEXT-PACKED PROMPT FOR STUDY NOTES
         format_blueprint = """
         LAYOUT FORMAT: TEXTBOOK-STYLE STUDY NOTES WITH MULTI-DISCIPLINARY DIAGRAM ANCHORS
         - Structure contents using clear headers: 'CHAPTER [X]: [CHAPTER TITLE]'.
@@ -177,7 +159,7 @@ def run_pure_autogen_pipeline(user_query: str, ctx: dict):
         To prevent API Rate Limit Errors, be concise and dense. Write elite textbook definitions without long conversational words.
         
         VISUAL DIAGRAM ADVANCEMENT RULE:
-        Whenever you introduce a vital conceptual mechanism (e.g., cellular division checkpoints, circuit loops, flowcharts, geometric proofs), insert a dedicated diagram placeholder anchor using this literal formatting token syntax on a standalone new line:
+        Whenever you introduce a vital conceptual mechanism, insert a dedicated diagram placeholder anchor using this literal formatting token syntax on a standalone new line:
         
 
 [Image of X]
@@ -260,3 +242,74 @@ def run_pure_autogen_pipeline(user_query: str, ctx: dict):
         final_raw_content = chat_history_log.chat_history[-1]['content'].replace("TERMINATE", "").strip()
 
     return final_raw_content
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RECONFIGURED INTERACTIVE EXECUTION FRAME
+# ──────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    print("\n" + "=" * 75)
+    print("  🤖 PURE AUTOGEN MULTI-AGENT COMPILER ENVIRONMENT")
+    print("  Fully Agentic Intent Routing | Instructions-Driven Core Pipeline")
+    print("=" * 75 + "\n")
+
+    while True:
+        try:
+            user_q = input("Ask your learning mentor (or type 'exit'): ").strip()
+            if user_q.lower() in ["exit", "quit"]: break
+            if not user_q: continue
+
+            # Execute the pure LLM-driven query parser agent
+            ctx = agentic_analyze_request(user_q)
+
+            if ctx.get("output_variety") == "non_educational_reject":
+                print(f"\n🛑 Sorry, this is a non-educational query. Please submit academic, curriculum, or general knowledge requests only.\n")
+                continue
+
+            if ctx["is_higher_secondary"]:
+                print("\n[High School Academic Stream Selection Required]")
+                print("[1] Science Track (PCM/PCB)   [2] Commerce Track   [3] Arts & Humanities")
+                stream_choice = input("Select Academic Stream (1-3): ").strip()
+                ctx["stream"] = "Commerce" if stream_choice == "2" else ("Arts" if stream_choice == "3" else "Science")
+            else:
+                print("\n[Academic Layout Medium Selection Required]")
+                print("[1] English Medium Instruction Layer")
+                print("[2] Marathi Medium Instruction Layer (मराठी भाषा माध्यम)")
+                medium_choice = input("Select Medium (1-2): ").strip()
+                if medium_choice == "2":
+                    ctx["language"] = "Marathi"
+                    ctx["board"] = "Maharashtra State Board"
+                else:
+                    ctx["language"] = "English"
+
+            print("\n[Document Export Format Selection]")
+            pdf_choice = input("Do you want to compile a downloadable PDF for this response? (y/n): ").strip().lower()
+            should_pdf = True if pdf_choice in ["y", "yes"] else False
+
+            final_response_text = run_pure_autogen_pipeline(user_q, ctx)
+            
+            print(f"\n" + "-" * 75)
+            print(final_response_text)
+            print("-" * 75)
+            
+            if should_pdf:
+                final_notes_payload = final_response_text
+                if "Official Board Reference" not in final_notes_payload and "Official Textbook" not in final_notes_payload:
+                    final_notes_payload += f"\n\n### EXT_LINK_PORTAL_TRIGGER\n- Official Textbook Repository Portal: https://ebalbharati.in\n"
+                
+                output_filename = f"{ctx['subject'].lower().replace(', ', '_')}_{ctx['output_variety']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                
+                compiled_pdf = compile_exam_paper_to_pdf(
+                    main_text=final_notes_payload, 
+                    ctx=ctx, 
+                    filename=output_filename, 
+                    output_dir=OUTPUT_DIR, 
+                    include_answer_key=ctx["with_answers"]
+                )
+                print(f"Here is the PDF file for your output: {compiled_pdf}\n")
+            else:
+                print("⚡ Process complete. No PDF requested or generated.\n")
+            
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"\n[Pipeline Critical Error]: {str(e)}\n")
