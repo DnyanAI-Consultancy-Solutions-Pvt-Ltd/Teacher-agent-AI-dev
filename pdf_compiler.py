@@ -70,9 +70,6 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
     pdf.set_margins(16, 28, 16)
     pdf.add_page()
     
-    # ──────────────────────────────────────────────────────────────────────────
-    # LAYOUT TYPE HEADERS INITIALIZATION
-    # ──────────────────────────────────────────────────────────────────────────
     if variety == "paperset":
         pdf.set_y(28)
         pdf.set_font(pdf._active_font, "B", 13)
@@ -138,7 +135,6 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
         pdf.line(16, pdf.get_y(), 194, pdf.get_y())
         pdf.ln(5)
 
-    # --- MAIN PAGE LINE ITERATOR ---
     in_answer_key = False
     skipping_lines = False
     
@@ -149,7 +145,6 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
             
         clean_line = safe_text_encode(stripped_line)
         
-        # --- FIXED CONVERSATIONAL MUTE FILTERS ---
         if not include_answer_key and clean_line.startswith("Answer:"):
             continue
 
@@ -169,26 +164,22 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
                 pdf.cell(55, 8, " CHAPTER / UNIT MODULE", border=1, fill=True, align="L")
                 pdf.cell(123, 8, " SUBTOPICS & CURRICULUM CONTENTS", border=1, fill=True, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-        # --- DYNAMIC TEXTBOOK VISUAL CONTAINER REGION ---
         if clean_line.startswith("[Image of") and clean_line.endswith("]"):
             pdf.ln(3)
             img_description = clean_line.replace("[Image of", "").replace("]", "").strip()
             
             start_img_y = pdf.get_y()
-            pdf.set_fill_color(248, 250, 252) # Cool grid white background layer
-            pdf.set_draw_color(148, 163, 184) # Modern grey bounds
+            pdf.set_fill_color(248, 250, 252)
+            pdf.set_draw_color(148, 163, 184)
             pdf.set_line_width(0.35)
             
-            # Construct dashed/solid decorative box
             pdf.rect(16, start_img_y, 178, 34, style="FD")
             
-            # Label banner cell
             pdf.set_xy(18, start_img_y + 4)
             pdf.set_font(pdf._active_font, "B", 9.5)
             pdf.set_text_color(30, 41, 59)
             pdf.cell(174, 5, "📊 TEXTBOOK GEOMETRIC GRAPH & DIAGRAM COGNITIVE ANCHOR", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
-            # Instructional content details
             pdf.set_xy(22, start_img_y + 11)
             pdf.set_font(pdf._active_font, "I", 8.5)
             pdf.set_text_color(71, 85, 105)
@@ -232,7 +223,6 @@ def compile_exam_paper_to_pdf(main_text: str, ctx: dict, filename: str, output_d
         if skipping_lines:
             continue
 
-        # --- VARIETY PRESENTATION COMPLIANCE MAPS ---
         if variety == "official_syllabus":
             pdf.set_font(pdf._active_font, "", 9.5)
             pdf.set_text_color(51, 65, 85)

@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import warnings
 from dotenv import load_dotenv
 import autogen
@@ -26,6 +27,7 @@ llm_config = {
         }
     ],
     "temperature": 0.1,
+    "timeout": 30,
 }
 
 OUTPUT_DIR = "outputs"
@@ -74,7 +76,6 @@ def agentic_analyze_request(user_question: str) -> dict:
         }"""
     )
     
-    # Run a quick 1-turn analysis chat to get structured profile data
     chat_result = analyzer_proxy.initiate_chat(
         recipient=analyzer_agent,
         message=f"Analyze this user query: '{user_question}'",
@@ -82,14 +83,11 @@ def agentic_analyze_request(user_question: str) -> dict:
     )
     
     raw_json_response = chat_result.chat_history[-1]['content']
-    
-    # Strip markdown code blocks if the LLM wrapped it
     clean_json = re.sub(r"```json|```", "", raw_json_response).strip()
     
     try:
         return json.loads(clean_json)
     except Exception:
-        # Secure baseline fallback object if JSON parsing encounters string irregularities
         return {
             "output_variety": "educational_query", "class_level": "9", "is_higher_secondary": False,
             "board": "CBSE", "language": "English", "subject": "General Studies",
@@ -97,7 +95,7 @@ def agentic_analyze_request(user_question: str) -> dict:
         }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MAIN AUTOGEN SYSTEM ORCHESTRATION PIPELINE
+# MAIN AUTOGEN SYSTEM ORCHESTRATION PIPELINE (WITH 429 RETRY INTERCEPTOR)
 # ──────────────────────────────────────────────────────────────────────────────
 def run_pure_autogen_pipeline(user_query: str, ctx: dict):
     print(f"\n[AutoGen Setup] Spawning academic group conversation room...")
@@ -160,9 +158,6 @@ def run_pure_autogen_pipeline(user_query: str, ctx: dict):
         
         VISUAL DIAGRAM ADVANCEMENT RULE:
         Whenever you introduce a vital conceptual mechanism, insert a dedicated diagram placeholder anchor using this literal formatting token syntax on a standalone new line:
-        
-
-[Image of X]
 
         Where X is a comprehensive description of what the graphic or structural illustration should visualize for a child.
         """
@@ -217,11 +212,32 @@ def run_pure_autogen_pipeline(user_query: str, ctx: dict):
     groupchat = GroupChat(agents=agent_team, messages=[], max_round=6, speaker_selection_method="round_robin")
     manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
 
-    chat_history_log = user_proxy.initiate_chat(
-        recipient=manager,
-        message=f"User Query Target: {user_query}. Dynamic_Orchestrator, parse the intent requirements and issue the dynamic instruction card.",
-        clear_history=True
-    )
+    # ──────────────────────────────────────────────────────────────────────────
+    # SELF-HEALING RATE LIMIT (429) RETRY GUARDRAIL LOOP
+    # ──────────────────────────────────────────────────────────────────────────
+    max_retries = 3
+    retry_delay = 16
+    chat_history_log = None
+    
+    for attempt in range(max_retries):
+        try:
+            chat_history_log = user_proxy.initiate_chat(
+                recipient=manager,
+                message=f"User Query Target: {user_query}. Dynamic_Orchestrator, parse the intent requirements and issue the dynamic instruction card.",
+                clear_history=True
+            )
+            break
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "rate_limit" in error_str:
+                if attempt < max_retries - 1:
+                    print(f"\n⚠️ [Groq TPM Rate Limit Hit]: Sleeping for {retry_delay} seconds to allow token window reset (Attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(retry_delay)
+                    continue
+            raise e
+
+    if not chat_history_log:
+        raise RuntimeError("Pipeline failed to generate log tree output due to critical timeout limits.")
 
     final_raw_content = ""
     for message in reversed(chat_history_log.chat_history):
@@ -258,7 +274,6 @@ if __name__ == "__main__":
             if user_q.lower() in ["exit", "quit"]: break
             if not user_q: continue
 
-            # Execute the pure LLM-driven query parser agent
             ctx = agentic_analyze_request(user_q)
 
             if ctx.get("output_variety") == "non_educational_reject":
@@ -288,7 +303,10 @@ if __name__ == "__main__":
             final_response_text = run_pure_autogen_pipeline(user_q, ctx)
             
             print(f"\n" + "-" * 75)
-            print(final_response_text)
+            if ctx["output_variety"] == "paperset":
+                print("here is the question paper")
+            else:
+                print(final_response_text)
             print("-" * 75)
             
             if should_pdf:

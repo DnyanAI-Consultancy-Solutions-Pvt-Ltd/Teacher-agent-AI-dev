@@ -1,7 +1,7 @@
 import os
 import base64
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
@@ -44,8 +44,28 @@ class GenerationResponse(BaseModel):
 
 @app.get("/", tags=["Health Check"])
 async def root():
-    """Simple status check verifying that the API engine layer is alive."""
-    return {"status": "operational", "timestamp": datetime.utcnow().isoformat()}
+    """Returns a clean HTML landing layer displaying the configured title metadata."""
+    html_content = """
+    <html>
+        <head>
+            <title>AI Academic API Portal</title>
+            <style>
+                body { font-family: Arial, sans-serif; background-color: #f8fafc; color: #0f172a; text-align: center; padding-top: 50px; }
+                h1 { color: #1e293b; }
+                p { color: #64748b; font-size: 1.1em; }
+                a { color: #2563eb; font-weight: bold; text-decoration: none; border: 1px solid #2563eb; padding: 10px 20px; border-radius: 5px; display: inline-block; margin-top: 20px; }
+                a:hover { background-color: #2563eb; color: white; }
+            </style>
+        </head>
+        <body>
+            <h1>🎓 AI Multi-Agent Academic API Portal</h1>
+            <p>The backend orchestration engine layer is active and running cleanly.</p>
+            <br>
+            <a href="/docs">🚀 Open Interactive Swagger Documentation Portal</a>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content, status_code=200)
 
 
 @app.post("/api/v1/generate", response_model=GenerationResponse, tags=["Academic Generation"])
